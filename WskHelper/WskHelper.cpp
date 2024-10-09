@@ -2,6 +2,14 @@
 #include "WskHelper.h"
 #include "Conversions.h"
 
+/*
+ * Welcome to WskHelper version 1.0
+ * This version enables the use of only 1 instance of Network Provider Interface (NPI)
+ * Also, it is only possible to make 1 listener or 1 connection to send/receive data on.
+ */
+
+
+
 // WSK Client Dispatch table that denotes the WSK version
 // Must be kept valid in memory until WskDeregister has been called and registration is no longer valid
 const WSK_CLIENT_DISPATCH wskAppDispatch = {
@@ -36,8 +44,9 @@ void PrintMessage() {
 
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
+	DbgPrint("Starting DriverEntry");
+
 	UNREFERENCED_PARAMETER(RegistryPath);
-	NTSTATUS status = STATUS_SUCCESS;
 
 	// Setup Device Object and Symbolic Link
 	UNICODE_STRING devName = RTL_CONSTANT_STRING(L"\\Device\\WskHelper");
@@ -47,6 +56,10 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 	// Set driver dispatch routines
 	DriverObject->DriverUnload = WskHelperUnload;
 
+	// Local variables
+	NTSTATUS status = STATUS_SUCCESS;
+	auto symLinkCreated = false;
+	auto wskInitialized = false;
 
 	do
 	{
@@ -64,7 +77,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 		if (!NT_SUCCESS(status))
 		{
-			KdPrint((DRIVER_PREFIX "Failed to create symbolic link (0x%08X)\n", status));
+			DbgPrint("Failed to create device (0x%08X)\n", status);
 			break;
 		}
 
@@ -72,11 +85,36 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 		if (!NT_SUCCESS(status))
 		{
-			KdPrint((DRIVER_PREFIX "Failed to initialize Wsk (0x%08X)\n", status));
+			DbgPrint("Failed to create symbolic link (0x%08X)\n", status);
 			break;
 		}
+
+		symLinkCreated = true;
+		wskInitialized = true;
 	} while (false);
 
+	// Error handling
+	if (!NT_SUCCESS(status))
+	{
+		if (wskInitialized)
+		{
+			// Unregister the WSK application
+			WskDeregister(&wskRegistration);
+		}
+
+		if (symLinkCreated)
+		{
+			IoDeleteSymbolicLink(&symLinkName);
+		}
+
+		if (deviceObject)
+		{
+			IoDeleteDevice(deviceObject);
+		}
+	}
+
+	DbgPrint("DriverEntry finished");
+	DbgPrint("It finished with status: (0x%08X)\n", status);
 	return status;
 }
 
@@ -95,12 +133,11 @@ void WskHelperUnload(PDRIVER_OBJECT DriverObject)
 	UNICODE_STRING symLinkName = RTL_CONSTANT_STRING(L"\\??\\WskHelper");
 
 	// Unregister the WSK application
-	WskDeregister(&wskRegistration);
+	
 
 	// Delete symbolic link and device
 	IoDeleteSymbolicLink(&symLinkName);
 	IoDeleteDevice(DriverObject->DeviceObject);
-
 }
 
 NTSTATUS WskHelperDispatchCreate(PDEVICE_OBJECT, PIRP Irp)
@@ -138,6 +175,26 @@ NTSTATUS InitializeWsk() {
 		}
 
 	} while (false);
+
+	return status;
+}
+
+
+/*
+ * WskDeregister will wait to return until all the following have completed:
+ * All captured instances of the provider NPI are released.
+ * Any outstanding calls to functions pointed to by WSK_PROVIDER_DISPATCH members have returned.
+ * All sockets are closed. 
+ */
+NTSTATUS TerminateWsk()
+{
+	NTSTATUS status = STATUS_SUCCESS;
+
+	// TODO: Close open sockets (None exist for now)
+
+	// For each successful npi capture, there must be a release before calling WskDeregister
+	WskReleaseProviderNPI(&wskRegistration);
+	WskDeregister(&wskRegistration);
 
 	return status;
 }

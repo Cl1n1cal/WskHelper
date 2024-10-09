@@ -17,6 +17,7 @@ NTSTATUS WskHelperDispatchClose(PDEVICE_OBJECT, PIRP Irp);
 
 // Wsk related functions
 NTSTATUS InitializeWsk();
+NTSTATUS TerminateWsk();
 NTSTATUS CreateConnectionSocket();
 NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context);
 NTSTATUS BindConnectionSocket();
