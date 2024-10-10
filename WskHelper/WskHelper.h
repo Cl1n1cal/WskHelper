@@ -7,6 +7,7 @@
 // Context structure for each socket
 typedef struct _WSK_APP_SOCKET_CONTEXT {
 	PWSK_SOCKET Socket;
+	KEVENT OperationCompleteEvent;
 
 } WSK_APP_SOCKET_CONTEXT, * PWSK_APP_SOCKET_CONTEXT;
 

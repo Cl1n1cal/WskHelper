@@ -1,0 +1,117 @@
+okay, now i think im getting it. I am setting the iocompletion routine so that the kernel will give the IRP to the completion routine and this routine will then further process the returned irp.
+
+I am guessing, that without this code in the completion routine, i would not set the memory pointer of the allocated socket to the socket returned by wsk
+
+
+since i allocate the pointer to a socketcontext
+
+PWSK_APP_SOCKET_CONTEXT socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
+	POOL_FLAG_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
+if (!socketContext)
+{
+	DbgPrint("Allocating Socket context failed");
+	status = STATUS_INSUFFICIENT_RESOURCES;
+	break;
+}
+
+DbgPrint("CreateConnectionSocket\n");
+status = CreateConnectionSocket(&wskProviderNpi, socketContext, nullptr); // Not using event callbacks for now, hence the nullptr on Dispatch
+
+
+
+and call createconnectionsocket with the address of the newly allocated socket
+
+and inside of createconnectionsocket i set the completion routine, giving it the pointer to the socket that i allocated previously
+
+IoSetCompletionRoutine(irp, CreateConnectionSocketComplete, SocketContext, TRUE, TRUE, TRUE);
+
+
+Then finally, in createconnectionsocketcomplete i take the finished irp returned by wsk, and set the pointer of the socket that i allocated to the pointer in the irp, corresponding to the returned socket by wsk
+
+NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
+{
+	UNREFERENCED_PARAMETER(DeviceObject);
+
+	PWSK_APP_SOCKET_CONTEXT SocketContext;
+
+	// Check the result of the socket creation
+	if (Irp->IoStatus.Status == STATUS_SUCCESS)
+	{
+		// Get the pointer to the socket context
+		SocketContext =
+			(PWSK_APP_SOCKET_CONTEXT)Context;
+
+		// Save the socket object for the new socket
+		SocketContext->Socket =
+			(PWSK_SOCKET)(Irp->IoStatus.Information);
+ChatGPT said:
+ChatGPT
+
+You’ve got it exactly right! Let's break down what you described to reinforce your understanding:
+1. Memory Allocation for socketContext
+
+You start by allocating memory for the socket context (PWSK_APP_SOCKET_CONTEXT), which will store the information related to the socket, including the socket object that gets created by WSK.
+
+c
+
+PWSK_APP_SOCKET_CONTEXT socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
+    POOL_FLAG_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
+
+Here, you are using ExAllocatePool2 to allocate memory for your socketContext, which will hold the socket object once it's created. If memory allocation fails, you handle it by returning an error status.
+2. Calling CreateConnectionSocket
+
+Next, you call CreateConnectionSocket, passing the address of the allocated socketContext. This context will be used throughout the socket creation process to hold information about the socket and manage any necessary resources.
+
+c
+
+status = CreateConnectionSocket(&wskProviderNpi, socketContext, nullptr);
+
+In this call, the socketContext is handed off to CreateConnectionSocket, where it will be stored for later use (in the I/O completion routine).
+3. Setting the I/O Completion Routine
+
+Inside CreateConnectionSocket, you set the I/O completion routine using IoSetCompletionRoutine. This ensures that when the I/O operation (socket creation) finishes, the system will call your CreateConnectionSocketComplete routine.
+
+c
+
+IoSetCompletionRoutine(irp, CreateConnectionSocketComplete, SocketContext, TRUE, TRUE, TRUE);
+
+Here’s what happens:
+
+    irp: This is the I/O Request Packet used by the kernel to manage the socket creation operation.
+    CreateConnectionSocketComplete: This is the function that will be called once the I/O operation (the call to WskSocket) is completed.
+    SocketContext: You pass the socketContext as a parameter to the completion routine. This allows the completion routine to access the context (and the allocated socket structure) once the operation completes.
+
+4. Handling the IRP in CreateConnectionSocketComplete
+
+Once the socket creation is complete, the kernel will invoke the completion routine, CreateConnectionSocketComplete. The IRP now contains the result of the operation, including the pointer to the created socket.
+
+Inside the completion routine, you retrieve the SocketContext that you passed earlier, and you can now set the Socket field in SocketContext with the socket object returned by WSK.
+
+c
+
+SocketContext = (PWSK_APP_SOCKET_CONTEXT)Context;
+SocketContext->Socket = (PWSK_SOCKET)(Irp->IoStatus.Information);
+
+    Context: This is the socketContext that you passed earlier. It holds the context of the operation and now needs to store the newly created socket object.
+    Irp->IoStatus.Information: This contains the pointer to the socket object created by the WSK subsystem. You save this socket pointer in SocketContext->Socket, which allows you to access and use the socket later.
+
+5. Why This Approach is Important
+
+Without this I/O completion routine, your program wouldn’t know when the WskSocket operation completes, and you wouldn’t be able to access the socket object created by WSK. The socket object is returned asynchronously and is stored in the IRP's IoStatus.Information.
+
+If you didn’t have the completion routine:
+
+    You wouldn’t have access to the socket created by WSK.
+    You wouldn’t be able to store the socket pointer in your socketContext.
+    You wouldn’t know when the socket is ready for use, since it’s created asynchronously.
+
+Summary of the Flow:
+
+    Allocate the socket context: You allocate memory to store the socket object (PWSK_APP_SOCKET_CONTEXT).
+    Call CreateConnectionSocket: This initiates the asynchronous socket creation and sets up the I/O completion routine.
+    Set the completion routine: You set the completion routine (CreateConnectionSocketComplete) to be called once the socket creation finishes.
+    In the completion routine: Once the socket is created, the IRP contains a pointer to the socket. You retrieve this pointer from Irp->IoStatus.Information and store it in SocketContext->Socket, allowing your application to use the socket.
+
+Your understanding is correct, and you’ve captured the flow of how the socket creation works in an asynchronous I/O model using the Winsock Kernel (WSK) and IRPs. The completion routine is essential for handling the asynchronous result and updating your socket context with the created socket object.
+
+Let me know if you need further clarification!

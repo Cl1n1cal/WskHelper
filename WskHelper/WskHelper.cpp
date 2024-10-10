@@ -357,6 +357,9 @@ NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKE
 	NTSTATUS	status;
 	PIRP		irp;
 
+	// Initialize the event for synchronization
+	KeInitializeEvent(&SocketContext->OperationCompleteEvent, NotificationEvent, FALSE);
+
 	// Allocate an IRP - Necessary for WSK operations
 	irp = IoAllocateIrp(
 		1,		// Stack size at least 1 for Wsk operations
@@ -385,7 +388,20 @@ NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKE
 		nullptr,
 		irp);
 
-	// Return status of call to WskSocket()
+
+	// If the WskSocket call can create a socket immediately it will return STATUS_SUCCESS
+	// If the socket cannot be created right away it will return STATUS_PENDING and the socket
+	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable
+			NULL);      // No timeout
+	}
+
 	return status;
 }
 
@@ -414,6 +430,7 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 
 
 			// Perform any other initializations
+		KeSetEvent(&SocketContext->OperationCompleteEvent, IO_NO_INCREMENT, FALSE);
 
 	}
 
@@ -423,6 +440,8 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 		// Handle error
 
 	}
+
+	
 
 	// Free the IRP
 	IoFreeIrp(Irp);
