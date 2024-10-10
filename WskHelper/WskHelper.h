@@ -28,4 +28,4 @@ NTSTATUS ConnectSocket(const char* RemoteIpAddress, short RemotePortNumber);
 NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context);
 
 void PrintMessage();
-
+NTSTATUS DelayForMilliseconds(LONG milliseconds);

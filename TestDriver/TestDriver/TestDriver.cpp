@@ -68,10 +68,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 	} while (false);
 
-
-	DbgPrint("DriverEntry Finished");
-
-	DbgPrint("Calling example function");
+	DbgPrint("Calling example function\n");
 	ExampleFunction();
 
 	return status;
@@ -91,7 +88,7 @@ void TestDriverUnload(PDRIVER_OBJECT DriverObject)
 	UNICODE_STRING symLinkName = RTL_CONSTANT_STRING(L"\\??\\TestDriver");
 
 
-	DbgPrint("Unloading Test driver");
+	DbgPrint("Unloading Test driver\n");
 	IoDeleteSymbolicLink(&symLinkName);
 	IoDeleteDevice(DriverObject->DeviceObject);
 }
@@ -206,9 +203,8 @@ void ExampleFunction() {
 
 	// Step 2: Send an IOCTL to the target driver
 	auto ioctlCode = IOCTL_WSKHELPER_CREATE_CONNECTION;  // Define your IOCTL code
-	UCHAR inputBuffer[128] = { 0 };       // Example input buffer
-	UCHAR outputBuffer[128] = { 0 };      // Example output buffer
-	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputBuffer, sizeof(inputBuffer), outputBuffer, sizeof(outputBuffer));
+	UCHAR inputOutputBuffer[2048] = { 0 };       // Input and output buffer is the same
+	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer, sizeof(inputOutputBuffer), inputOutputBuffer, sizeof(inputOutputBuffer));
 
 	if (NT_SUCCESS(status)) {
 		DbgPrint("IOCTL sent successfully!\n");

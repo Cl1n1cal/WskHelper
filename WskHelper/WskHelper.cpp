@@ -130,6 +130,17 @@ NTSTATUS CompleteIrp(PIRP Irp, NTSTATUS Status = STATUS_SUCCESS, ULONG_PTR Info 
 	return Status;
 }
 
+NTSTATUS DelayForMilliseconds(LONG milliseconds)
+{
+	LARGE_INTEGER interval;
+
+	// Convert milliseconds to 100-nanosecond units
+	interval.QuadPart = -(milliseconds * 10000); // Negative value for relative time
+
+	// Wait for the specified interval
+	return KeDelayExecutionThread(KernelMode, FALSE, &interval);
+}
+
 void WskHelperUnload(PDRIVER_OBJECT DriverObject)
 {
 	KdPrint(("Unloading driver\n"));
@@ -165,27 +176,42 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 	case IOCTL_WSKHELPER_CREATE_CONNECTION:
 		{
 			// TODO: The ioctl request got this far
-			DbgPrint("Create connection called");
+			DbgPrint("Create connection called\n");
+			DbgPrint("Size of message: %llu\n", sizeof(Message));
+			DbgPrint("Size og dic.OuputBufferLength: %d\n", dic.OutputBufferLength);
 
 			if (dic.OutputBufferLength < sizeof(Message))
 			{
 				status = STATUS_BUFFER_TOO_SMALL;
+				DbgPrint("Buffer too small\n");
 				break;
 			}
 
-			auto message = (Message*)Irp->AssociatedIrp.SystemBuffer;
+			DbgPrint("Send stats called\n");
+			WSK_PROVIDER_NPI wskProviderNpi;
 
-			if (message == nullptr)
+
+			// 1. Register WSK Provider Npi - Gives access to Wsk Functions
+			// WSK_NO_WAIT - Return from the function immediately if the NPI is not available
+			DbgPrint("WskCaptureProviderNPI\n");
+			status = WskCaptureProviderNPI(&WskRegistration, WSK_NO_WAIT, &wskProviderNpi);
+
+			DelayForMilliseconds(3000);
+
+			if (!NT_SUCCESS(status))
 			{
-				status = STATUS_INVALID_PARAMETER;
-				break;
+				DbgPrint("WskCaptureProviderNpi failed", status);
 			}
+
+
+
+
+			// WskSocketConnect can be used for the 3 steps below, but for educational purposes it will be done manually - for now
 
 			// 2. Create the connection socket
 			// Allocate memory for socketContext
-			socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
+			PWSK_APP_SOCKET_CONTEXT socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
 				POOL_FLAG_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
-
 			if (!socketContext)
 			{
 				DbgPrint("Allocating Socket context failed");
@@ -194,51 +220,93 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			}
 
 			DbgPrint("CreateConnectionSocket\n");
-			status = CreateConnectionSocket(); // Not using event callbacks for now, hence the nullptr on Dispatch
+			status = CreateConnectionSocket(&wskProviderNpi, socketContext, nullptr); // Not using event callbacks for now, hence the nullptr on Dispatch
+
+			DelayForMilliseconds(3000);
 
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("CreateConnectionSocket failed\n", status);
-				break;
 			}
 
-			/*
 			// 3. Bind the socket to a local transport address
-	// Prepare the local transport address (e.g., bind to 127.0.0.1:8080)
+			// Prepare the local transport address (e.g., bind to 127.0.0.1:8080)
 			SOCKADDR_IN localAddr;
 			localAddr.sin_family = AF_INET;
 			localAddr.sin_port = 0;               // Bind to port any
 			localAddr.sin_addr.s_addr = INADDR_ANY;  // Bind to any local address
-			*/
-
-			// localAddress set in BindConnectionSocket()
 
 			DbgPrint("BindConnectionSocket\n");
-			status = BindConnectionSocket();
+			status = BindConnectionSocket(socketContext->Socket, (PSOCKADDR)&localAddr);
+			DelayForMilliseconds(3000);
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("BinConnectionSocket failed\n", status);
 			}
 
-			/*
 			// 4. Create a connection with the socket
 			SOCKADDR_IN remoteAddr;
 			remoteAddr.sin_family = AF_INET;
 			remoteAddr.sin_port = Khtons((SHORT)9999);  // Port 9999
 			remoteAddr.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
-			*/
-
-			// TODO: Use parameters, for now they are unreferenced and ConnectSocket will set it up to 127.0.0.1, 9999
 			DbgPrint("ConnectSocket\n");
-			status = ConnectSocket("127.0.0.1", 9999);
+			status = ConnectSocket(socketContext->Socket, (PSOCKADDR)&remoteAddr);
+			DelayForMilliseconds(3000);
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("ConnectSocket failed\n", status);
-				break;
 			}
+
+			// 5. Send data over the socket connection oriented socket
+			 // Allocate memory for the data
+			const char* data = "Hello, WSK!";
+			size_t dataLength = strlen(data) + 1;
+			PVOID bufferMemory = ExAllocatePool2(POOL_FLAG_NON_PAGED, dataLength, '1gaT');
+			if (!bufferMemory)
+			{
+				DbgPrint("Exallocatepool2 failed\n");
+				return STATUS_INSUFFICIENT_RESOURCES; // Allocation failed
+			}
+
+			// Copy the data into the allocated memory
+			RtlCopyMemory(bufferMemory, data, dataLength);
+
+			// Allocate an MDL for the buffer memory
+			DbgPrint("IoAllocatedMdl\n");
+			PMDL mdl = IoAllocateMdl(bufferMemory, (ULONG)dataLength, FALSE, FALSE, NULL);
+			if (!mdl) {
+				DbgPrint("IoAllocateMdl failed\n");
+				ExFreePool(bufferMemory);
+				return STATUS_INSUFFICIENT_RESOURCES; // MDL allocation failed
+			}
+
+			// Build the MDL for non-paged pool
+			DbgPrint("MmBuildMdlForNonPagedPool\n");
+			MmBuildMdlForNonPagedPool(mdl);
+
+
+			// Prepare the WSK_BUF structure
+			WSK_BUF dataBuffer;
+			dataBuffer.Mdl = mdl;                     // Set the MDL for the data
+			dataBuffer.Offset = 0; //MmGetMdlByteOffset(mdl);                    
+			dataBuffer.Length = dataLength;           // Set the length of the buffer
+
+			DelayForMilliseconds(3000);
+
+			DbgPrint("SendData\n");
+			status = SendData(socketContext->Socket, &dataBuffer);
+			DelayForMilliseconds(3000);
+			if (!NT_SUCCESS(status))
+			{
+				DbgPrint("SendData failed\n", status);
+			}
+
+			status = STATUS_SUCCESS;
+			break;
 		}
 	}
 
+	DbgPrint("WskHelper dispatch finished with status: (0x%08X)\n", status);
 	return status;
 }
 
