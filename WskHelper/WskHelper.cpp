@@ -13,28 +13,16 @@
 
 // WSK Client Dispatch table that denotes the WSK version
 // Must be kept valid in memory until WskDeregister has been called and registration is no longer valid
-const WSK_CLIENT_DISPATCH wskAppDispatch = {
+const WSK_CLIENT_DISPATCH WskAppDispatch = {
   MAKE_WSK_VERSION(1,0), // Use WSK version 1.0
   0,		// Reserved
   nullptr	// WskClientEvent callback not required for WSK version 1.0
 };
 
-// Global WskProvider
-WSK_PROVIDER_NPI wskProviderNpi;
 
-// Necessary for registering this driver as a WSK app
-WSK_CLIENT_NPI wskClientNpi;
 
 // WSK Registration object. Must be kept valid in memory
-WSK_REGISTRATION wskRegistration;
-
-PWSK_APP_SOCKET_CONTEXT socketContext;
-
-//ipv4 Socket address
-SOCKADDR_IN localAddress;
-
-
-SOCKADDR_IN remoteAddress;
+WSK_REGISTRATION WskRegistration;
 
 
 void PrintMessage() {
@@ -103,7 +91,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 		if (wskInitialized)
 		{
 			// Unregister the WSK application
-			WskDeregister(&wskRegistration);
+			WskDeregister(&WskRegistration);
 		}
 
 		if (symLinkCreated)
@@ -175,7 +163,6 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 	{
 	case IOCTL_WSKHELPER_CREATE_CONNECTION:
 		{
-			// TODO: The ioctl request got this far
 			DbgPrint("Create connection called\n");
 			DbgPrint("Size of message: %llu\n", sizeof(Message));
 			DbgPrint("Size og dic.OuputBufferLength: %d\n", dic.OutputBufferLength);
@@ -314,13 +301,18 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 NTSTATUS InitializeWsk() {
 	NTSTATUS status = STATUS_SUCCESS;
+	// Global WskProvider
+	WSK_PROVIDER_NPI wskProviderNpi;
+
+	// Necessary for registering this driver as a WSK app
+	WSK_CLIENT_NPI wskClientNpi;
 
 	do
 	{
 		// Register the WSK application
 		wskClientNpi.ClientContext = nullptr;
-		wskClientNpi.Dispatch = &wskAppDispatch;
-		status = WskRegister(&wskClientNpi, &wskRegistration);
+		wskClientNpi.Dispatch = &WskAppDispatch;
+		status = WskRegister(&wskClientNpi, &WskRegistration);
 
 		if (!NT_SUCCESS(status)) {
 			DbgPrint("WsKRegister failed in InitializeWsk(): %d\n", status);
@@ -328,7 +320,7 @@ NTSTATUS InitializeWsk() {
 		}
 
 		// Capture provider
-		status = WskCaptureProviderNPI(&wskRegistration, WSK_NO_WAIT, &wskProviderNpi);
+		status = WskCaptureProviderNPI(&WskRegistration, WSK_NO_WAIT, &wskProviderNpi);
 
 		if (!NT_SUCCESS(status))
 		{
@@ -355,15 +347,12 @@ NTSTATUS TerminateWsk()
 	// TODO: Close open sockets (None exist for now)
 
 	// For each successful npi capture, there must be a release before calling WskDeregister
-	WskReleaseProviderNPI(&wskRegistration);
-	WskDeregister(&wskRegistration);
+	WskReleaseProviderNPI(&WskRegistration);
+	WskDeregister(&WskRegistration);
 
 	return status;
 }
-
-
-//NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_CLIENT_CONNECTION_DISPATCH Dispatch) // Not using event callbacks for now, hence the nullptr on Dispatch
-NTSTATUS CreateConnectionSocket()
+NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_CLIENT_CONNECTION_DISPATCH Dispatch)
 {
 	NTSTATUS	status;
 	PIRP		irp;
@@ -379,18 +368,18 @@ NTSTATUS CreateConnectionSocket()
 	}
 
 	// Set the completion routine for the IRP
-	IoSetCompletionRoutine(irp, CreateConnectionSocketComplete, &socketContext, TRUE, TRUE, TRUE);
+	IoSetCompletionRoutine(irp, CreateConnectionSocketComplete, SocketContext, TRUE, TRUE, TRUE);
 
 	// WskSocketConnect is used to create a connection oriented socket, bind it to a local transport address
 	// and connect it to a remote transport address
-	status = wskProviderNpi.Dispatch->WskSocket(
-		wskProviderNpi.Client,
+	status = WskProviderNpi->Dispatch->WskSocket(
+		WskProviderNpi->Client,
 		AF_INET,						// IPPROTO_TCP is within this family
 		SOCK_STREAM,					// Socket Type: Stream (TCP)
 		IPPROTO_TCP,					// TCP protocol
 		WSK_FLAG_CONNECTION_SOCKET,		// Connection socket
-		&socketContext,
-		nullptr,						// Not using callback so nullptr for now
+		SocketContext,
+		Dispatch,
 		nullptr,
 		nullptr,
 		nullptr,
@@ -445,19 +434,15 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 
 
 // Function to bind a connection socket to a local transport address
-NTSTATUS BindConnectionSocket()
+NTSTATUS BindConnectionSocket(PWSK_SOCKET Socket, PSOCKADDR LocalAddress)
 {
-	localAddress.sin_family = AF_INET;			// Ipv4 Family
-	localAddress.sin_port = 0;					// Bind to port any
-	localAddress.sin_addr.s_addr = INADDR_ANY;  // Bind to any local address
-
 	PWSK_PROVIDER_LISTEN_DISPATCH Dispatch;
 	PIRP Irp;
 	NTSTATUS Status;
 
 	// Get pointer to the socket's provider dispatch structure
 	Dispatch =
-		(PWSK_PROVIDER_LISTEN_DISPATCH)(socketContext->Socket->Dispatch);
+		(PWSK_PROVIDER_LISTEN_DISPATCH)(Socket->Dispatch);
 
 	// Allocate an IRP
 	Irp =
@@ -477,7 +462,7 @@ NTSTATUS BindConnectionSocket()
 	IoSetCompletionRoutine(
 		Irp,
 		BindComplete,
-		socketContext->Socket,  // Use the socket object for the context
+		Socket,  // Use the socket object for the context
 		TRUE,
 		TRUE,
 		TRUE
@@ -486,8 +471,8 @@ NTSTATUS BindConnectionSocket()
 	// Initiate the bind operation on the socket
 	Status =
 		Dispatch->WskBind(
-			socketContext->Socket,
-			(PSOCKADDR)&localAddress,
+			Socket,
+			LocalAddress,
 			0,  // No flags for wsk application
 			Irp
 		);
@@ -531,24 +516,15 @@ NTSTATUS BindComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
 }
 
 // Function to connect a socket to a remote transport address
-NTSTATUS ConnectSocket(const char* RemoteIpAddress, short RemotePortNumber)
+NTSTATUS ConnectSocket(PWSK_SOCKET Socket, PSOCKADDR RemoteAddress)
 {
 	PWSK_PROVIDER_CONNECTION_DISPATCH Dispatch;
 	PIRP Irp;
 	NTSTATUS Status;
-	UNREFERENCED_PARAMETER(RemoteIpAddress); // TODO
-	UNREFERENCED_PARAMETER(RemotePortNumber); // TODO
-
-	//Set remote address
-	remoteAddress.sin_family = AF_INET;
-	remoteAddress.sin_port =Khtons((SHORT)9999);  // Port 9999
-	remoteAddress.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
-
-
 
 	// Get pointer to the socket's provider dispatch structure
 	Dispatch =
-		(PWSK_PROVIDER_CONNECTION_DISPATCH)(socketContext->Socket->Dispatch);
+		(PWSK_PROVIDER_CONNECTION_DISPATCH)(Socket->Dispatch);
 
 	// Allocate an IRP
 	Irp =
@@ -568,7 +544,7 @@ NTSTATUS ConnectSocket(const char* RemoteIpAddress, short RemotePortNumber)
 	IoSetCompletionRoutine(
 		Irp,
 		ConnectComplete,
-		socketContext->Socket,  // Use the socket object for the context
+		Socket,  // Use the socket object for the context
 		TRUE,
 		TRUE,
 		TRUE
@@ -577,8 +553,8 @@ NTSTATUS ConnectSocket(const char* RemoteIpAddress, short RemotePortNumber)
 	// Initiate the connect operation on the socket
 	Status =
 		Dispatch->WskConnect(
-			socketContext->Socket,
-			(PSOCKADDR)&remoteAddress,
+			Socket,
+			RemoteAddress,
 			0,  // No flags
 			Irp
 		);
@@ -603,6 +579,98 @@ NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
 
 		// Perform the next operation on the socket
 
+	}
+
+	// Error status
+	else
+	{
+		// Handle error
+
+	}
+
+	// Free the IRP
+	IoFreeIrp(Irp);
+
+	// Always return STATUS_MORE_PROCESSING_REQUIRED to
+	// terminate the completion processing of the IRP.
+	return STATUS_MORE_PROCESSING_REQUIRED;
+}
+
+
+// Function to send data
+NTSTATUS SendData(PWSK_SOCKET Socket, PWSK_BUF DataBuffer)
+{
+	PWSK_PROVIDER_CONNECTION_DISPATCH Dispatch;
+	PIRP Irp;
+	NTSTATUS Status;
+
+	// Get pointer to the provider dispatch structure
+	Dispatch =
+		(PWSK_PROVIDER_CONNECTION_DISPATCH)(Socket->Dispatch);
+
+	// Allocate an IRP
+	Irp =
+		IoAllocateIrp(
+			1,
+			FALSE
+		);
+
+	// Check result
+	if (!Irp)
+	{
+		// Return error
+		DbgPrint("Irp allocation failed\n");
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	// Set the completion routine for the IRP
+	IoSetCompletionRoutine(
+		Irp,
+		SendComplete,
+		DataBuffer,  // Use the data buffer for the context
+		TRUE,
+		TRUE,
+		TRUE
+	);
+
+	// Initiate the send operation on the socket
+	DbgPrint("Calling WskSend\n");
+	Status =
+		Dispatch->WskSend(
+			Socket,
+			DataBuffer,
+			0,  // No flags
+			Irp
+		);
+
+	// Return the status of the call to WskSend()
+	DbgPrint("Send operation completed with status: 0x%08X\n", Status);
+	return Status;
+}
+
+// Send IoCompletion routine
+NTSTATUS
+SendComplete(
+	PDEVICE_OBJECT DeviceObject,
+	PIRP Irp,
+	PVOID Context
+)
+{
+	UNREFERENCED_PARAMETER(DeviceObject);
+
+	PWSK_BUF DataBuffer;
+	ULONG ByteCount;
+
+	// Check the result of the send operation
+	if (Irp->IoStatus.Status == STATUS_SUCCESS)
+	{
+		// Get the pointer to the data buffer
+		DataBuffer = (PWSK_BUF)Context;
+
+		// Get the number of bytes sent
+		ByteCount = (ULONG)(Irp->IoStatus.Information);
+
+		// Re-use or free the data buffer
 	}
 
 	// Error status
