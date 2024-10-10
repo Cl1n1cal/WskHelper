@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "WskHelper.h"
 #include "Conversions.h"
+#include "WskHelperCommon.h"
 
 /*
  * Welcome to WskHelper version 1.0
@@ -27,7 +28,7 @@ WSK_CLIENT_NPI wskClientNpi;
 // WSK Registration object. Must be kept valid in memory
 WSK_REGISTRATION wskRegistration;
 
-WSK_APP_SOCKET_CONTEXT socketContext;
+PWSK_APP_SOCKET_CONTEXT socketContext;
 
 //ipv4 Socket address
 SOCKADDR_IN localAddress;
@@ -55,6 +56,9 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 	// Set driver dispatch routines
 	DriverObject->DriverUnload = WskHelperUnload;
+	DriverObject->MajorFunction[IRP_MJ_CREATE] = WskHelperDispatchCreate;
+	DriverObject->MajorFunction[IRP_MJ_CLOSE] = WskHelperDispatchClose;
+	DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = WskHelperDispatchDeviceControl;
 
 	// Local variables
 	NTSTATUS status = STATUS_SUCCESS;
@@ -67,7 +71,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 		if (!NT_SUCCESS(status))
 		{
-			KdPrint((DRIVER_PREFIX "Failed to create device (0x%08X)\n", status));
+			DbgPrint("Failed to create device (0x%08X)\n", status);
 			break;
 		}
 
@@ -77,7 +81,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 		if (!NT_SUCCESS(status))
 		{
-			DbgPrint("Failed to create device (0x%08X)\n", status);
+			DbgPrint("Failed to create symbolic link (0x%08X)\n", status);
 			break;
 		}
 
@@ -85,7 +89,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 		if (!NT_SUCCESS(status))
 		{
-			DbgPrint("Failed to create symbolic link (0x%08X)\n", status);
+			DbgPrint("Failed to initialize wsk (0x%08X)\n", status);
 			break;
 		}
 
@@ -148,6 +152,96 @@ NTSTATUS WskHelperDispatchClose(PDEVICE_OBJECT, PIRP Irp)
 {
 	return CompleteIrp(Irp);
 }
+
+NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
+{
+	auto irpSp = IoGetCurrentIrpStackLocation(Irp);
+	auto& dic = irpSp->Parameters.DeviceIoControl;
+	auto status = STATUS_INVALID_DEVICE_REQUEST;
+	//ULONG_PTR len = 0;
+
+	switch (dic.IoControlCode)
+	{
+	case IOCTL_WSKHELPER_CREATE_CONNECTION:
+		{
+			// TODO: The ioctl request got this far
+			DbgPrint("Create connection called");
+
+			if (dic.OutputBufferLength < sizeof(Message))
+			{
+				status = STATUS_BUFFER_TOO_SMALL;
+				break;
+			}
+
+			auto message = (Message*)Irp->AssociatedIrp.SystemBuffer;
+
+			if (message == nullptr)
+			{
+				status = STATUS_INVALID_PARAMETER;
+				break;
+			}
+
+			// 2. Create the connection socket
+			// Allocate memory for socketContext
+			socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
+				POOL_FLAG_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
+
+			if (!socketContext)
+			{
+				DbgPrint("Allocating Socket context failed");
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+
+			DbgPrint("CreateConnectionSocket\n");
+			status = CreateConnectionSocket(); // Not using event callbacks for now, hence the nullptr on Dispatch
+
+			if (!NT_SUCCESS(status))
+			{
+				DbgPrint("CreateConnectionSocket failed\n", status);
+				break;
+			}
+
+			/*
+			// 3. Bind the socket to a local transport address
+	// Prepare the local transport address (e.g., bind to 127.0.0.1:8080)
+			SOCKADDR_IN localAddr;
+			localAddr.sin_family = AF_INET;
+			localAddr.sin_port = 0;               // Bind to port any
+			localAddr.sin_addr.s_addr = INADDR_ANY;  // Bind to any local address
+			*/
+
+			// localAddress set in BindConnectionSocket()
+
+			DbgPrint("BindConnectionSocket\n");
+			status = BindConnectionSocket();
+			if (!NT_SUCCESS(status))
+			{
+				DbgPrint("BinConnectionSocket failed\n", status);
+			}
+
+			/*
+			// 4. Create a connection with the socket
+			SOCKADDR_IN remoteAddr;
+			remoteAddr.sin_family = AF_INET;
+			remoteAddr.sin_port = Khtons((SHORT)9999);  // Port 9999
+			remoteAddr.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
+			*/
+
+			// TODO: Use parameters, for now they are unreferenced and ConnectSocket will set it up to 127.0.0.1, 9999
+			DbgPrint("ConnectSocket\n");
+			status = ConnectSocket("127.0.0.1", 9999);
+			if (!NT_SUCCESS(status))
+			{
+				DbgPrint("ConnectSocket failed\n", status);
+				break;
+			}
+		}
+	}
+
+	return status;
+}
+
 
 
 NTSTATUS InitializeWsk() {
@@ -285,8 +379,8 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 // Function to bind a connection socket to a local transport address
 NTSTATUS BindConnectionSocket()
 {
-	localAddress.sin_family = AF_INET;
-	localAddress.sin_port = 0;               // Bind to port any
+	localAddress.sin_family = AF_INET;			// Ipv4 Family
+	localAddress.sin_port = 0;					// Bind to port any
 	localAddress.sin_addr.s_addr = INADDR_ANY;  // Bind to any local address
 
 	PWSK_PROVIDER_LISTEN_DISPATCH Dispatch;
@@ -295,7 +389,7 @@ NTSTATUS BindConnectionSocket()
 
 	// Get pointer to the socket's provider dispatch structure
 	Dispatch =
-		(PWSK_PROVIDER_LISTEN_DISPATCH)(socketContext.Socket->Dispatch);
+		(PWSK_PROVIDER_LISTEN_DISPATCH)(socketContext->Socket->Dispatch);
 
 	// Allocate an IRP
 	Irp =
@@ -315,7 +409,7 @@ NTSTATUS BindConnectionSocket()
 	IoSetCompletionRoutine(
 		Irp,
 		BindComplete,
-		socketContext.Socket,  // Use the socket object for the context
+		socketContext->Socket,  // Use the socket object for the context
 		TRUE,
 		TRUE,
 		TRUE
@@ -324,7 +418,7 @@ NTSTATUS BindConnectionSocket()
 	// Initiate the bind operation on the socket
 	Status =
 		Dispatch->WskBind(
-			socketContext.Socket,
+			socketContext->Socket,
 			(PSOCKADDR)&localAddress,
 			0,  // No flags for wsk application
 			Irp
@@ -378,16 +472,15 @@ NTSTATUS ConnectSocket(const char* RemoteIpAddress, short RemotePortNumber)
 	UNREFERENCED_PARAMETER(RemotePortNumber); // TODO
 
 	//Set remote address
-	SOCKADDR_IN remoteAddr;
-	remoteAddr.sin_family = AF_INET;
-	remoteAddr.sin_port =Khtons((SHORT)9999);  // Port 9999
-	remoteAddr.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
+	remoteAddress.sin_family = AF_INET;
+	remoteAddress.sin_port =Khtons((SHORT)9999);  // Port 9999
+	remoteAddress.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
 
 
 
 	// Get pointer to the socket's provider dispatch structure
 	Dispatch =
-		(PWSK_PROVIDER_CONNECTION_DISPATCH)(socketContext.Socket->Dispatch);
+		(PWSK_PROVIDER_CONNECTION_DISPATCH)(socketContext->Socket->Dispatch);
 
 	// Allocate an IRP
 	Irp =
@@ -407,7 +500,7 @@ NTSTATUS ConnectSocket(const char* RemoteIpAddress, short RemotePortNumber)
 	IoSetCompletionRoutine(
 		Irp,
 		ConnectComplete,
-		socketContext.Socket,  // Use the socket object for the context
+		socketContext->Socket,  // Use the socket object for the context
 		TRUE,
 		TRUE,
 		TRUE
@@ -416,7 +509,7 @@ NTSTATUS ConnectSocket(const char* RemoteIpAddress, short RemotePortNumber)
 	// Initiate the connect operation on the socket
 	Status =
 		Dispatch->WskConnect(
-			socketContext.Socket,
+			socketContext->Socket,
 			(PSOCKADDR)&remoteAddress,
 			0,  // No flags
 			Irp

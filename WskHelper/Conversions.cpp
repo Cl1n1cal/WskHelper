@@ -22,3 +22,24 @@ USHORT Kntohs(USHORT NetShort) {
 ULONG Kntohl(ULONG NetLong) {
 	return Khtonl(NetLong); // Reuse the same function since it's symmetric
 }
+
+// Function to convert IPv4 address string to network long (ULONG in network byte order)
+ULONG ipv4_to_network_long(const char* ip_addr) {
+    ULONG network_long = 0;
+    NTSTATUS status;
+    in_addr addr;  // Structure to hold the IPv4 address in binary format
+    const char* terminator;
+
+    // Convert IPv4 address string to in_addr structure
+    status = RtlIpv4StringToAddressA(ip_addr, TRUE, &terminator, &addr);
+
+    if (NT_SUCCESS(status)) {
+        // The s_addr field of in_addr is already in network byte order
+        network_long = addr.s_addr;
+    }
+    else {
+        DbgPrint("Invalid IPv4 address: %s\n", ip_addr);
+    }
+
+    return network_long;  // Already in network byte order
+}

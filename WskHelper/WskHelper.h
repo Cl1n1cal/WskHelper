@@ -1,8 +1,9 @@
 #pragma once
 
-#define DRIVER_PREFIX "WSKH"
+#define DRIVER_PREFIX_WSKHELPER "WSKH"
 
 
+// TODO: Include localaddr and remoteaddr in the context to reduce amount og global variables
 // Context structure for each socket
 typedef struct _WSK_APP_SOCKET_CONTEXT {
 	PWSK_SOCKET Socket;
@@ -14,6 +15,7 @@ typedef struct _WSK_APP_SOCKET_CONTEXT {
 void WskHelperUnload(PDRIVER_OBJECT DriverObject);
 NTSTATUS WskHelperDispatchCreate(PDEVICE_OBJECT, PIRP Irp);
 NTSTATUS WskHelperDispatchClose(PDEVICE_OBJECT, PIRP Irp);
+NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp);
 
 // Wsk related functions
 NTSTATUS InitializeWsk();

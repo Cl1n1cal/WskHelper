@@ -104,6 +104,7 @@
     <ClInclude Include="Conversions.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="WskHelper.h" />
+    <ClInclude Include="WskHelperCommon.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
