@@ -11,6 +11,7 @@ int Error(const char* msg)
 
 int main() {
 	//Open file handle to the driver
+	std::cout << "Opening handle, connecting and sending data...\n";
 	HANDLE hDevice = ::CreateFile(L"\\\\.\\WskHelper", GENERIC_READ | GENERIC_WRITE, 0, nullptr,
 		OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
@@ -31,5 +32,7 @@ int main() {
 	}
 
 	::CloseHandle(hDevice);
+
+	std::cout << "WskClient Finished calling driver\n";
 	return 0;
 }

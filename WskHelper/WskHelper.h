@@ -23,11 +23,11 @@ NTSTATUS InitializeWsk();
 NTSTATUS TerminateWsk();
 NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_CLIENT_CONNECTION_DISPATCH Dispatch);
 NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the socvisuket creation IoCompletion routine
-NTSTATUS BindConnectionSocket(PWSK_SOCKET Socket, PSOCKADDR LocalAddress);
+NTSTATUS BindConnectionSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR LocalAddress);
 NTSTATUS BindComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the bind IoCompletion routine
-NTSTATUS ConnectSocket(PWSK_SOCKET Socket, PSOCKADDR RemoteAddress); // Function to connect a socket to a remote transport address
+NTSTATUS ConnectSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR RemoteAddress); // Function to connect a socket to a remote transport address
 NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the connect IoCompletion routine
-NTSTATUS SendData(PWSK_SOCKET Socket, PWSK_BUF DataBuffer); // Function to send data
+NTSTATUS SendData(PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_BUF DataBuffer); // Function to send data
 NTSTATUS SendComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the send IoCompletion routine
 
 void PrintMessage();

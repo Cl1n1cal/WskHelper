@@ -183,11 +183,11 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			DbgPrint("WskCaptureProviderNPI\n");
 			status = WskCaptureProviderNPI(&WskRegistration, WSK_NO_WAIT, &wskProviderNpi);
 
-			DelayForMilliseconds(3000);
+			
 
 			if (!NT_SUCCESS(status))
 			{
-				DbgPrint("WskCaptureProviderNpi failed", status);
+				DbgPrint("WskCaptureProviderNpi failed (0x%08X)\n", status);
 			}
 
 
@@ -197,8 +197,10 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 			// 2. Create the connection socket
 			// Allocate memory for socketContext
+			// Pointer to a driver - determined context to pass to the IoCompletion routine.
+			// Context information must be stored in nonpaged memory, because the IoCompletion routine is called at IRQL <= DISPATCH_LEVEL.
 			PWSK_APP_SOCKET_CONTEXT socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
-				POOL_FLAG_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
+				POOL_FLAG_NON_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
 			if (!socketContext)
 			{
 				DbgPrint("Allocating Socket context failed");
@@ -206,14 +208,29 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 				break;
 			}
 
+			// Initialize the event for synchronization
+			KeInitializeEvent(&socketContext->OperationCompleteEvent, NotificationEvent, FALSE);
+
 			DbgPrint("CreateConnectionSocket\n");
 			status = CreateConnectionSocket(&wskProviderNpi, socketContext, nullptr); // Not using event callbacks for now, hence the nullptr on Dispatch
 
-			DelayForMilliseconds(3000);
+			// If the WskSocket call can create a socket immediately it will return STATUS_SUCCESS
+			// If the socket cannot be created right away it will return STATUS_PENDING and the socket
+			// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+			if (status == STATUS_PENDING) {
+				// Wait for the event to be signaled by the completion routine
+				status = KeWaitForSingleObject(
+					&socketContext->OperationCompleteEvent,  // The event
+					Executive,  // Wait at executive level
+					KernelMode, // Kernel-mode wait
+					FALSE,      // Non-alertable 
+					NULL);      // No timeout
+			}
+
 
 			if (!NT_SUCCESS(status))
 			{
-				DbgPrint("CreateConnectionSocket failed\n", status);
+				DbgPrint("CreateConnectionSocket failed (0x%08X)\n", status);
 			}
 
 			// 3. Bind the socket to a local transport address
@@ -224,11 +241,10 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			localAddr.sin_addr.s_addr = INADDR_ANY;  // Bind to any local address
 
 			DbgPrint("BindConnectionSocket\n");
-			status = BindConnectionSocket(socketContext->Socket, (PSOCKADDR)&localAddr);
-			DelayForMilliseconds(3000);
+			status = BindConnectionSocket(socketContext, (PSOCKADDR)&localAddr);
 			if (!NT_SUCCESS(status))
 			{
-				DbgPrint("BinConnectionSocket failed\n", status);
+				DbgPrint("BinConnectionSocket failed: (0x%08X)\n", status);
 			}
 
 			// 4. Create a connection with the socket
@@ -237,11 +253,17 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			remoteAddr.sin_port = Khtons((SHORT)9999);  // Port 9999
 			remoteAddr.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
 			DbgPrint("ConnectSocket\n");
-			status = ConnectSocket(socketContext->Socket, (PSOCKADDR)&remoteAddr);
+
+			if (socketContext->Socket == NULL) {
+				DbgPrint("Socket is NULL after WskSocket call\n");
+				return STATUS_INVALID_HANDLE;  // Or a similar error status
+			}
+
+			status = ConnectSocket(socketContext, (PSOCKADDR)&remoteAddr);
 			DelayForMilliseconds(3000);
 			if (!NT_SUCCESS(status))
 			{
-				DbgPrint("ConnectSocket failed\n", status);
+				DbgPrint("ConnectSocket failed: (0x%08X)\n", status);
 			}
 
 			// 5. Send data over the socket connection oriented socket
@@ -281,11 +303,11 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			DelayForMilliseconds(3000);
 
 			DbgPrint("SendData\n");
-			status = SendData(socketContext->Socket, &dataBuffer);
-			DelayForMilliseconds(3000);
+			status = SendData(socketContext, &dataBuffer);
+			
 			if (!NT_SUCCESS(status))
 			{
-				DbgPrint("SendData failed\n", status);
+				DbgPrint("SendData failed: (0x%08X)\n", status);
 			}
 
 			status = STATUS_SUCCESS;
@@ -357,8 +379,6 @@ NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKE
 	NTSTATUS	status;
 	PIRP		irp;
 
-	// Initialize the event for synchronization
-	KeInitializeEvent(&SocketContext->OperationCompleteEvent, NotificationEvent, FALSE);
 
 	// Allocate an IRP - Necessary for WSK operations
 	irp = IoAllocateIrp(
@@ -371,7 +391,12 @@ NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKE
 	}
 
 	// Set the completion routine for the IRP
-	IoSetCompletionRoutine(irp, CreateConnectionSocketComplete, SocketContext, TRUE, TRUE, TRUE);
+	IoSetCompletionRoutine(irp,
+		&CreateConnectionSocketComplete,
+		SocketContext,	// Driver determined socket context
+		TRUE,
+		TRUE,
+		TRUE);
 
 	// WskSocketConnect is used to create a connection oriented socket, bind it to a local transport address
 	// and connect it to a remote transport address
@@ -389,18 +414,7 @@ NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKE
 		irp);
 
 
-	// If the WskSocket call can create a socket immediately it will return STATUS_SUCCESS
-	// If the socket cannot be created right away it will return STATUS_PENDING and the socket
-	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
-	if (status == STATUS_PENDING) {
-		// Wait for the event to be signaled by the completion routine
-		status = KeWaitForSingleObject(
-			&SocketContext->OperationCompleteEvent,  // The event
-			Executive,  // Wait at executive level
-			KernelMode, // Kernel-mode wait
-			FALSE,      // Non-alertable
-			NULL);      // No timeout
-	}
+
 
 	return status;
 }
@@ -410,9 +424,10 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 {
 	UNREFERENCED_PARAMETER(DeviceObject);
 
-	PWSK_APP_SOCKET_CONTEXT SocketContext;
+	PWSK_APP_SOCKET_CONTEXT SocketContext; // Only local variable in the completion routine
 
 	// Check the result of the socket creation
+	DbgPrint("Irp status = (0x%08X)", Irp->IoStatus.Status);
 	if (Irp->IoStatus.Status == STATUS_SUCCESS)
 	{
 		// Get the pointer to the socket context
@@ -430,15 +445,26 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 
 
 			// Perform any other initializations
+
+		// Notify the waiter that the socket was created
 		KeSetEvent(&SocketContext->OperationCompleteEvent, IO_NO_INCREMENT, FALSE);
+
+		// Reset the event after the operation is complete
+		//KeResetEvent(&SocketContext->OperationCompleteEvent);
 
 	}
 
 	// Error status
 	else
 	{
-		// Handle error
+		// Notify the waiter that the socket was created
+	
 
+		// Reset the event after the operation is complete
+		//KeResetEvent(&SocketContext->OperationCompleteEvent);
+
+		// TODO: Handle error
+		// TODO: What if status was not STATUS_SUCCESS, what should then be done
 	}
 
 	
@@ -453,15 +479,17 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 
 
 // Function to bind a connection socket to a local transport address
-NTSTATUS BindConnectionSocket(PWSK_SOCKET Socket, PSOCKADDR LocalAddress)
+NTSTATUS BindConnectionSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR LocalAddress)
 {
-	PWSK_PROVIDER_LISTEN_DISPATCH Dispatch;
+	PWSK_PROVIDER_CONNECTION_DISPATCH Dispatch;
 	PIRP Irp;
-	NTSTATUS Status;
+	NTSTATUS status;
+
+	// Initialize the event for synchronization
+	KeResetEvent(&SocketContext->OperationCompleteEvent);
 
 	// Get pointer to the socket's provider dispatch structure
-	Dispatch =
-		(PWSK_PROVIDER_LISTEN_DISPATCH)(Socket->Dispatch);
+	Dispatch = (PWSK_PROVIDER_CONNECTION_DISPATCH)(SocketContext->Socket->Dispatch);
 
 	// Allocate an IRP
 	Irp =
@@ -481,23 +509,36 @@ NTSTATUS BindConnectionSocket(PWSK_SOCKET Socket, PSOCKADDR LocalAddress)
 	IoSetCompletionRoutine(
 		Irp,
 		BindComplete,
-		Socket,  // Use the socket object for the context
+		SocketContext,  // Use the socket context object for the context. This is because kewait needs notify in completion routine. Driver determined.
 		TRUE,
 		TRUE,
 		TRUE
 	);
 
 	// Initiate the bind operation on the socket
-	Status =
+	status =
 		Dispatch->WskBind(
-			Socket,
+			SocketContext->Socket,
 			LocalAddress,
 			0,  // No flags for wsk application
 			Irp
 		);
 
-	// Return the status of the call to WskBind()
-	return Status;
+
+	// If the WskSocket call can bind socket immediately it will return STATUS_SUCCESS
+	// If the socket cannot be bound right away it will return STATUS_PENDING and the socket
+	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable
+			NULL);      // No timeout
+	}
+
+	return status;
 }
 
 
@@ -507,22 +548,30 @@ NTSTATUS BindComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
 {
 	UNREFERENCED_PARAMETER(DeviceObject);
 
-	PWSK_SOCKET Socket;
+	PWSK_APP_SOCKET_CONTEXT SocketContext;
 
 	// Check the result of the bind operation
 	if (Irp->IoStatus.Status == STATUS_SUCCESS)
 	{
-		// Get the socket object from the context
-		Socket = (PWSK_SOCKET)Context;
+		// Get the socket context object from the context
+		SocketContext = (PWSK_APP_SOCKET_CONTEXT)Context;
+
+		// Save the socket object for the new socket in the socket context
+		//SocketContext->Socket =(PWSK_SOCKET)(Irp->IoStatus.Information);
+
 
 		// Perform the next operation on the socket
+
+		// Notify the waiter that the socket was bound
+		KeSetEvent(&SocketContext->OperationCompleteEvent, IO_NO_INCREMENT, FALSE);
 
 	}
 
 	// Error status
 	else
 	{
-		// Handle error
+		// TODO: Handle error
+		// TODO: What if the socket was not bound and status was not STATUS_SUCCESS
 
 	}
 
@@ -535,51 +584,78 @@ NTSTATUS BindComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
 }
 
 // Function to connect a socket to a remote transport address
-NTSTATUS ConnectSocket(PWSK_SOCKET Socket, PSOCKADDR RemoteAddress)
+NTSTATUS ConnectSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR RemoteAddress)
 {
 	PWSK_PROVIDER_CONNECTION_DISPATCH Dispatch;
 	PIRP Irp;
-	NTSTATUS Status;
+	NTSTATUS status = INVALID_KERNEL_HANDLE;
 
-	// Get pointer to the socket's provider dispatch structure
-	Dispatch =
-		(PWSK_PROVIDER_CONNECTION_DISPATCH)(Socket->Dispatch);
+	do {
+		if (!SocketContext->Socket->Dispatch) {
+			DbgPrint("Dispatch was nullptr");
+			break;
+		}
 
-	// Allocate an IRP
-	Irp =
-		IoAllocateIrp(
-			1,
-			FALSE
+		// Get pointer to the socket's provider dispatch structure
+		// TODO: CHECK FOR NULL
+		Dispatch =
+			(PWSK_PROVIDER_CONNECTION_DISPATCH)(SocketContext->Socket->Dispatch); // This should be a connection socket TODO: ARE WE USING DISPATCH???
+
+
+		// Initialize the event for synchronization
+		KeResetEvent(&SocketContext->OperationCompleteEvent);
+
+		
+		// Allocate an IRP
+		Irp =
+			IoAllocateIrp(
+				1,
+				FALSE
+			);
+
+		// Check result
+		if (!Irp)
+		{
+			// Return error
+			return STATUS_INSUFFICIENT_RESOURCES;
+		}
+
+		// Set the completion routine for the IRP
+		IoSetCompletionRoutine(
+			Irp,
+			ConnectComplete,
+			SocketContext,  // Use the socket object for the context
+			TRUE,
+			TRUE,
+			TRUE
 		);
 
-	// Check result
-	if (!Irp)
-	{
-		// Return error
-		return STATUS_INSUFFICIENT_RESOURCES;
-	}
+		// Initiate the connect operation on the socket
+		status =
+			Dispatch->WskConnect(
+				SocketContext->Socket,
+				RemoteAddress,
+				0,  // No flags
+				Irp
+			);
 
-	// Set the completion routine for the IRP
-	IoSetCompletionRoutine(
-		Irp,
-		ConnectComplete,
-		Socket,  // Use the socket object for the context
-		TRUE,
-		TRUE,
-		TRUE
-	);
+		// TODO: Might need to destroy ke event if STATUS_SUCCESS
 
-	// Initiate the connect operation on the socket
-	Status =
-		Dispatch->WskConnect(
-			Socket,
-			RemoteAddress,
-			0,  // No flags
-			Irp
-		);
+		// If the WskSocket call can bind socket immediately it will return STATUS_SUCCESS
+		// If the socket cannot be bound right away it will return STATUS_PENDING and the socket
+		// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+		if (status == STATUS_PENDING) {
+			// Wait for the event to be signaled by the completion routine
+			status = KeWaitForSingleObject(
+				&SocketContext->OperationCompleteEvent,  // The event
+				Executive,  // Wait at executive level
+				KernelMode, // Kernel-mode wait
+				FALSE,      // Non-alertable
+				NULL);      // No timeout
+		}
 
-	// Return the status of the call to WskConnect()
-	return Status;
+	} while (false);
+	return status;
 }
 
 
@@ -588,15 +664,22 @@ NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
 {
 	UNREFERENCED_PARAMETER(DeviceObject);
 
-	PWSK_SOCKET Socket;
+	PWSK_APP_SOCKET_CONTEXT SocketContext;
 
 	// Check the result of the connect operation
 	if (Irp->IoStatus.Status == STATUS_SUCCESS)
 	{
 		// Get the socket object from the context
-		Socket = (PWSK_SOCKET)Context;
+		SocketContext = (PWSK_APP_SOCKET_CONTEXT)Context;
+		
+		//SocketContext->Socket = (PWSK_SOCKET)Irp->IoStatus.Information;
 
 		// Perform the next operation on the socket
+
+			// Notify the waiter that the socket was bound
+		KeSetEvent(&SocketContext->OperationCompleteEvent, IO_NO_INCREMENT, FALSE);
+
+
 
 	}
 
@@ -617,15 +700,18 @@ NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context)
 
 
 // Function to send data
-NTSTATUS SendData(PWSK_SOCKET Socket, PWSK_BUF DataBuffer)
+NTSTATUS SendData(PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_BUF DataBuffer)
 {
 	PWSK_PROVIDER_CONNECTION_DISPATCH Dispatch;
 	PIRP Irp;
-	NTSTATUS Status;
+	NTSTATUS status;
+
+	// Initialize the event for synchronization
+	KeResetEvent(&SocketContext->OperationCompleteEvent);
 
 	// Get pointer to the provider dispatch structure
 	Dispatch =
-		(PWSK_PROVIDER_CONNECTION_DISPATCH)(Socket->Dispatch);
+		(PWSK_PROVIDER_CONNECTION_DISPATCH)(SocketContext->Socket->Dispatch);
 
 	// Allocate an IRP
 	Irp =
@@ -646,7 +732,7 @@ NTSTATUS SendData(PWSK_SOCKET Socket, PWSK_BUF DataBuffer)
 	IoSetCompletionRoutine(
 		Irp,
 		SendComplete,
-		DataBuffer,  // Use the data buffer for the context
+		SocketContext,  // Use the SocketContext testing// data buffer for the context
 		TRUE,
 		TRUE,
 		TRUE
@@ -654,17 +740,30 @@ NTSTATUS SendData(PWSK_SOCKET Socket, PWSK_BUF DataBuffer)
 
 	// Initiate the send operation on the socket
 	DbgPrint("Calling WskSend\n");
-	Status =
+	status =
 		Dispatch->WskSend(
-			Socket,
+			SocketContext->Socket,
 			DataBuffer,
 			0,  // No flags
 			Irp
 		);
 
+	// If the WskSocket call can bind socket immediately it will return STATUS_SUCCESS
+	// If the socket cannot be bound right away it will return STATUS_PENDING and the socket
+	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable
+			NULL);      // No timeout
+	}
+
 	// Return the status of the call to WskSend()
-	DbgPrint("Send operation completed with status: 0x%08X\n", Status);
-	return Status;
+	DbgPrint("Send operation completed with status: 0x%08X\n", status);
+	return status;
 }
 
 // Send IoCompletion routine
@@ -677,20 +776,28 @@ SendComplete(
 {
 	UNREFERENCED_PARAMETER(DeviceObject);
 
-	PWSK_BUF DataBuffer;
+	//PWSK_BUF DataBuffer;
 	ULONG ByteCount;
+	PWSK_APP_SOCKET_CONTEXT SocketContext;
 
 	// Check the result of the send operation
 	if (Irp->IoStatus.Status == STATUS_SUCCESS)
 	{
 		// Get the pointer to the data buffer
-		DataBuffer = (PWSK_BUF)Context;
+		//DataBuffer = (PWSK_BUF)Context;
+		SocketContext = (PWSK_APP_SOCKET_CONTEXT)Context;
 
 		// Get the number of bytes sent
 		ByteCount = (ULONG)(Irp->IoStatus.Information);
 
 		// Re-use or free the data buffer
+
+
+		// Notify the waiter that the socket was bound
+		KeSetEvent(&SocketContext->OperationCompleteEvent, IO_NO_INCREMENT, FALSE);
 	}
+
+	
 
 	// Error status
 	else
