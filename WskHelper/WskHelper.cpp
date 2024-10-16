@@ -13,7 +13,7 @@
 
 // WSK Client Dispatch table that denotes the WSK version
 // Must be kept valid in memory until WskDeregister has been called and registration is no longer valid
-const WSK_CLIENT_DISPATCH WskAppDispatch = {
+const WSK_CLIENT_DISPATCH g_wskAppDispatch = {
   MAKE_WSK_VERSION(1,0), // Use WSK version 1.0
   0,		// Reserved
   nullptr	// WskClientEvent callback not required for WSK version 1.0
@@ -22,7 +22,7 @@ const WSK_CLIENT_DISPATCH WskAppDispatch = {
 
 
 // WSK Registration object. Must be kept valid in memory
-WSK_REGISTRATION WskRegistration;
+WSK_REGISTRATION g_wskRegistration;
 
 
 void PrintMessage() {
@@ -91,7 +91,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 		if (wskInitialized)
 		{
 			// Unregister the WSK application
-			WskDeregister(&WskRegistration);
+			WskDeregister(&g_wskRegistration);
 		}
 
 		if (symLinkCreated)
@@ -181,7 +181,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			// 1. Register WSK Provider Npi - Gives access to Wsk Functions
 			// WSK_NO_WAIT - Return from the function immediately if the NPI is not available
 			DbgPrint("WskCaptureProviderNPI\n");
-			status = WskCaptureProviderNPI(&WskRegistration, WSK_NO_WAIT, &wskProviderNpi);
+			status = WskCaptureProviderNPI(&g_wskRegistration, WSK_NO_WAIT, &wskProviderNpi);
 
 			
 
@@ -213,19 +213,6 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 			DbgPrint("CreateConnectionSocket\n");
 			status = CreateConnectionSocket(&wskProviderNpi, socketContext, nullptr); // Not using event callbacks for now, hence the nullptr on Dispatch
-
-			// If the WskSocket call can create a socket immediately it will return STATUS_SUCCESS
-			// If the socket cannot be created right away it will return STATUS_PENDING and the socket
-			// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
-			if (status == STATUS_PENDING) {
-				// Wait for the event to be signaled by the completion routine
-				status = KeWaitForSingleObject(
-					&socketContext->OperationCompleteEvent,  // The event
-					Executive,  // Wait at executive level
-					KernelMode, // Kernel-mode wait
-					FALSE,      // Non-alertable 
-					NULL);      // No timeout
-			}
 
 
 			if (!NT_SUCCESS(status))
@@ -333,8 +320,8 @@ NTSTATUS InitializeWsk() {
 	{
 		// Register the WSK application
 		wskClientNpi.ClientContext = nullptr;
-		wskClientNpi.Dispatch = &WskAppDispatch;
-		status = WskRegister(&wskClientNpi, &WskRegistration);
+		wskClientNpi.Dispatch = &g_wskAppDispatch;
+		status = WskRegister(&wskClientNpi, &g_wskRegistration);
 
 		if (!NT_SUCCESS(status)) {
 			DbgPrint("WsKRegister failed in InitializeWsk(): %d\n", status);
@@ -342,7 +329,7 @@ NTSTATUS InitializeWsk() {
 		}
 
 		// Capture provider
-		status = WskCaptureProviderNPI(&WskRegistration, WSK_NO_WAIT, &wskProviderNpi);
+		status = WskCaptureProviderNPI(&g_wskRegistration, WSK_NO_WAIT, &wskProviderNpi);
 
 		if (!NT_SUCCESS(status))
 		{
@@ -369,8 +356,8 @@ NTSTATUS TerminateWsk()
 	// TODO: Close open sockets (None exist for now)
 
 	// For each successful npi capture, there must be a release before calling WskDeregister
-	WskReleaseProviderNPI(&WskRegistration);
-	WskDeregister(&WskRegistration);
+	WskReleaseProviderNPI(&g_wskRegistration);
+	WskDeregister(&g_wskRegistration);
 
 	return status;
 }
@@ -413,7 +400,18 @@ NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKE
 		nullptr,
 		irp);
 
-
+	// If the WskSocket call can create a socket immediately it will return STATUS_SUCCESS
+		// If the socket cannot be created right away it will return STATUS_PENDING and the socket
+		// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable 
+			NULL);      // No timeout
+	}
 
 
 	return status;
@@ -466,6 +464,8 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 		// TODO: Handle error
 		// TODO: What if status was not STATUS_SUCCESS, what should then be done
 	}
+
+
 
 	
 
