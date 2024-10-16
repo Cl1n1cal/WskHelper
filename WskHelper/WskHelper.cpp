@@ -161,7 +161,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 	switch (dic.IoControlCode)
 	{
-	case IOCTL_WSKHELPER_CREATE_CONNECTION:
+		case IOCTL_WSKHELPER_CREATE_CONNECTION:
 		{
 			DbgPrint("Create connection called\n");
 			DbgPrint("Size of message: %llu\n", sizeof(Message));
@@ -253,8 +253,13 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 				DbgPrint("ConnectSocket failed: (0x%08X)\n", status);
 			}
 
+			break;
+		}
+
+		case IOCTL_WSKHELPER_SEND_DATA:
+		{
 			// 5. Send data over the socket connection oriented socket
-			 // Allocate memory for the data
+			// Allocate memory for the data
 			const char* data = "Hello, WSK!";
 			size_t dataLength = strlen(data) + 1;
 			PVOID bufferMemory = ExAllocatePool2(POOL_FLAG_NON_PAGED, dataLength, '1gaT');
@@ -291,14 +296,13 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 			DbgPrint("SendData\n");
 			status = SendData(socketContext, &dataBuffer);
-			
+
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("SendData failed: (0x%08X)\n", status);
 			}
 
-			status = STATUS_SUCCESS;
-			break;
+
 		}
 	}
 
