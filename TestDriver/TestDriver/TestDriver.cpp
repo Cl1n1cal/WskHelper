@@ -185,7 +185,8 @@ NTSTATUS SendIoctlToDevice(
 }
 
 
-void ExampleFunction() {
+void ExampleFunction() 
+{
 	UNICODE_STRING targetDeviceName;
 	PDEVICE_OBJECT targetDeviceObject;
 	PFILE_OBJECT fileObject;
