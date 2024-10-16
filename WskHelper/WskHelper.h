@@ -30,5 +30,4 @@ NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); 
 NTSTATUS SendData(PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_BUF DataBuffer); // Function to send data
 NTSTATUS SendComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the send IoCompletion routine
 
-void PrintMessage();
 NTSTATUS DelayForMilliseconds(LONG milliseconds);

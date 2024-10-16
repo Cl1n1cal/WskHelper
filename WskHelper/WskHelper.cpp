@@ -24,11 +24,7 @@ const WSK_CLIENT_DISPATCH g_wskAppDispatch = {
 // WSK Registration object. Must be kept valid in memory
 WSK_REGISTRATION g_wskRegistration;
 
-
-void PrintMessage() {
-	DbgPrint("Hello world");
-}
-
+PWSK_APP_SOCKET_CONTEXT g_socketContext;
 
 
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
@@ -199,9 +195,9 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			// Allocate memory for socketContext
 			// Pointer to a driver - determined context to pass to the IoCompletion routine.
 			// Context information must be stored in nonpaged memory, because the IoCompletion routine is called at IRQL <= DISPATCH_LEVEL.
-			PWSK_APP_SOCKET_CONTEXT socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
+			g_socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
 				POOL_FLAG_NON_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
-			if (!socketContext)
+			if (!g_socketContext)
 			{
 				DbgPrint("Allocating Socket context failed");
 				status = STATUS_INSUFFICIENT_RESOURCES;
@@ -209,10 +205,10 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			}
 
 			// Initialize the event for synchronization
-			KeInitializeEvent(&socketContext->OperationCompleteEvent, NotificationEvent, FALSE);
+			KeInitializeEvent(&g_socketContext->OperationCompleteEvent, NotificationEvent, FALSE);
 
 			DbgPrint("CreateConnectionSocket\n");
-			status = CreateConnectionSocket(&wskProviderNpi, socketContext, nullptr); // Not using event callbacks for now, hence the nullptr on Dispatch
+			status = CreateConnectionSocket(&wskProviderNpi, g_socketContext, nullptr); // Not using event callbacks for now, hence the nullptr on Dispatch
 
 
 			if (!NT_SUCCESS(status))
@@ -228,7 +224,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			localAddr.sin_addr.s_addr = INADDR_ANY;  // Bind to any local address
 
 			DbgPrint("BindConnectionSocket\n");
-			status = BindConnectionSocket(socketContext, (PSOCKADDR)&localAddr);
+			status = BindConnectionSocket(g_socketContext, (PSOCKADDR)&localAddr);
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("BinConnectionSocket failed: (0x%08X)\n", status);
@@ -241,12 +237,12 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			remoteAddr.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
 			DbgPrint("ConnectSocket\n");
 
-			if (socketContext->Socket == NULL) {
+			if (g_socketContext->Socket == NULL) {
 				DbgPrint("Socket is NULL after WskSocket call\n");
 				return STATUS_INVALID_HANDLE;  // Or a similar error status
 			}
 
-			status = ConnectSocket(socketContext, (PSOCKADDR)&remoteAddr);
+			status = ConnectSocket(g_socketContext, (PSOCKADDR)&remoteAddr);
 			DelayForMilliseconds(3000);
 			if (!NT_SUCCESS(status))
 			{
@@ -295,7 +291,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			DelayForMilliseconds(3000);
 
 			DbgPrint("SendData\n");
-			status = SendData(socketContext, &dataBuffer);
+			status = SendData(g_socketContext, &dataBuffer);
 
 			if (!NT_SUCCESS(status))
 			{
