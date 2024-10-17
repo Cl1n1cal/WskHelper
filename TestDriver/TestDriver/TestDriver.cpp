@@ -202,13 +202,29 @@ void ExampleFunction()
 		return;
 	}
 
+	// TODO: Create KeWaiter so we can make sure that the g_socketContext is set correctly.
+
 	// Step 2: Send an IOCTL to the target driver
 	auto ioctlCode = IOCTL_WSKHELPER_CREATE_CONNECTION;  // Define your IOCTL code
 	UCHAR inputOutputBuffer[2048] = { 0 };       // Input and output buffer is the same
 	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer, sizeof(inputOutputBuffer), inputOutputBuffer, sizeof(inputOutputBuffer));
 
 	if (NT_SUCCESS(status)) {
-		DbgPrint("IOCTL sent successfully!\n");
+		DbgPrint("Create Conn IOCTL sent successfully!\n");
+	}
+	else {
+		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
+	}
+
+	
+
+	// Send Data IOCTL
+	ioctlCode = IOCTL_WSKHELPER_SEND_DATA;  // Define your IOCTL code
+	UCHAR inputOutputBuffer1[2048] = { 0 };       // Input and output buffer is the same
+	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer1, sizeof(inputOutputBuffer1), inputOutputBuffer1, sizeof(inputOutputBuffer1));
+
+	if (NT_SUCCESS(status)) {
+		DbgPrint("Send Data IOCTL sent successfully!\n");
 	}
 	else {
 		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
