@@ -296,7 +296,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 				DbgPrint("SendData failed: (0x%08X)\n", status);
 			}
 
-
+			break;
 		}
 
 		case IOCTL_WSKHELPER_DISCONNECT:
@@ -307,6 +307,8 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			if (!NT_SUCCESS(status)) {
 				DbgPrint("DisconnectSocket failed: (0x%08X)\n", status);
 			}
+
+			break;
 		}
 	}
 
