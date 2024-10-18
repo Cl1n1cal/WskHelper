@@ -931,3 +931,91 @@ DisconnectComplete(
 	// terminate the completion processing of the IRP.
 	return STATUS_MORE_PROCESSING_REQUIRED;
 }
+
+// Function to close a socket
+NTSTATUS
+CloseSocket(
+	PWSK_SOCKET Socket,
+	PWSK_APP_SOCKET_CONTEXT SocketContext
+)
+{
+	PWSK_PROVIDER_BASIC_DISPATCH Dispatch;
+	PIRP Irp;
+	NTSTATUS Status;
+
+	// Get pointer to the socket's provider dispatch structure
+	Dispatch =
+		(PWSK_PROVIDER_BASIC_DISPATCH)(Socket->Dispatch);
+
+	// Allocate an IRP
+	Irp =
+		IoAllocateIrp(
+			1,
+			FALSE
+		);
+
+	// Check result
+	if (!Irp)
+	{
+		// Return error
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	// Set the completion routine for the IRP
+	IoSetCompletionRoutine(
+		Irp,
+		CloseSocketComplete,
+		SocketContext,
+		TRUE,
+		TRUE,
+		TRUE
+	);
+
+	// Initiate the close operation on the socket
+	Status =
+		Dispatch->WskCloseSocket(
+			Socket,
+			Irp
+		);
+
+	// Return the status of the call to WskCloseSocket()
+	return Status;
+}
+
+// Socket close IoCompletion routine
+NTSTATUS
+CloseSocketComplete(
+	PDEVICE_OBJECT DeviceObject,
+	PIRP Irp,
+	PVOID Context
+)
+{
+	UNREFERENCED_PARAMETER(DeviceObject);
+
+	PWSK_APP_SOCKET_CONTEXT SocketContext;
+
+	// Check the result of the socket close operation
+	if (Irp->IoStatus.Status == STATUS_SUCCESS)
+	{
+		// Get the pointer to the socket context
+		SocketContext =
+			(PWSK_APP_SOCKET_CONTEXT)Context;
+
+		// Perform any cleanup and/or deallocation of the socket context
+		//...
+	}
+
+	// Error status
+	else
+	{
+		// Handle error
+		//...
+	}
+
+	// Free the IRP
+	IoFreeIrp(Irp);
+
+	// Always return STATUS_MORE_PROCESSING_REQUIRED to
+	// terminate the completion processing of the IRP.
+	return STATUS_MORE_PROCESSING_REQUIRED;
+}
