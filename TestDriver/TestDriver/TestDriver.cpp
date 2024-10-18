@@ -26,7 +26,7 @@ NTSTATUS SendIoctlToDevice(
 
 void TestSendData();
 void TestDisconnect();
-void TestClosesocket();
+void TestCloseSocket();
 
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
@@ -233,9 +233,11 @@ void TestSendData()
 
 	if (NT_SUCCESS(status)) {
 		DbgPrint("Send Data IOCTL sent successfully!\n");
+		DbgPrint("+++Send Data Test Finished!+++\n");
 	}
 	else {
 		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
+		DbgPrint("---Send data Test Failed---\n");
 	}
 
 	// Dereference the file object when done
@@ -278,16 +280,72 @@ void TestDisconnect()
 
 	if (NT_SUCCESS(status)) {
 		DbgPrint("Disconnect IOCTL sent successfully!\n");
+		DbgPrint("+++Disconnect Test Finished!+++\n");
 	}
 	else {
 		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
+		DbgPrint("---Disconnect Test Failed---\n");
 	}
 
 	// Dereference the file object when done
 	ObDereferenceObject(fileObject);
 }
 
-void TestClosesocket()
+void TestCloseSocket()
 {
+	UNICODE_STRING targetDeviceName;
+	PDEVICE_OBJECT targetDeviceObject;
+	PFILE_OBJECT fileObject;
+	NTSTATUS status;
 
+	// The target device's name (e.g., for the second driver)
+	RtlInitUnicodeString(&targetDeviceName, L"\\Device\\WskHelper");
+
+	// Step 1: Get the target device object pointer
+	status = GetTargetDeviceObject(&targetDeviceName, &targetDeviceObject, &fileObject);
+	if (!NT_SUCCESS(status)) {
+		DbgPrint("Failed to get the target device object\n");
+		return;
+	}
+
+	// Step 1: Send an IOCTL to create a socket and a connection
+	auto ioctlCode = IOCTL_WSKHELPER_CREATE_CONNECTION;  // Define your IOCTL code
+	UCHAR inputOutputBuffer[2048] = { 0 };       // Input and output buffer is the same
+	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer, sizeof(inputOutputBuffer), inputOutputBuffer, sizeof(inputOutputBuffer));
+
+	if (NT_SUCCESS(status)) {
+		DbgPrint("Create Conn IOCTL sent successfully!\n");
+	}
+	else {
+		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
+	}
+
+	// Step 2: Send an IOCTL to disconnect the created socket
+	ioctlCode = IOCTL_WSKHELPER_DISCONNECT;  // Define your IOCTL code
+	UCHAR inputOutputBuffer1[2048] = { 0 };       // Input and output buffer is the same
+	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer1, sizeof(inputOutputBuffer1), inputOutputBuffer1, sizeof(inputOutputBuffer1));
+
+	if (NT_SUCCESS(status)) {
+		DbgPrint("CloseSocket IOCTL sent successfully!\n");
+	}
+	else {
+		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
+	}
+
+	// Step 3: Send an IOCTL to Close the socket
+	ioctlCode = IOCTL_WSKHELPER_CLOSE;  // Define your IOCTL code
+	UCHAR inputOutputBuffer2[2048] = { 0 };       // Input and output buffer is the same
+	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer2, sizeof(inputOutputBuffer2), inputOutputBuffer2, sizeof(inputOutputBuffer2));
+
+	if (NT_SUCCESS(status)) {
+		DbgPrint("CloseSocket IOCTL sent successfully!\n");
+		DbgPrint("+++CloseSocket test finished!+++\n");
+	}
+	else {
+		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
+		DbgPrint("---CloseSocket Test Failed---\n");
+	}
+
+	// Dereference the file object when done
+	ObDereferenceObject(fileObject);
 }
