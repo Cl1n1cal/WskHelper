@@ -29,5 +29,6 @@ NTSTATUS ConnectSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR RemoteAd
 NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the connect IoCompletion routine
 NTSTATUS SendData(PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_BUF DataBuffer); // Function to send data
 NTSTATUS SendComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the send IoCompletion routine
-
+NTSTATUS DisconnectSocket(PWSK_APP_SOCKET_CONTEXT SocketContext);
+NTSTATUS DisconnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context);
 NTSTATUS DelayForMilliseconds(LONG milliseconds);
