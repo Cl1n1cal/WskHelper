@@ -299,7 +299,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 		}
 
-		case IOCTL_WSKHELPER_CLOSE:
+		case IOCTL_WSKHELPER_DISCONNECT:
 		{
 
 		}
