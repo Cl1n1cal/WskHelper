@@ -31,7 +31,7 @@ NTSTATUS SendData(PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_BUF DataBuffer); /
 NTSTATUS SendComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the send IoCompletion routine
 NTSTATUS DisconnectSocket(PWSK_APP_SOCKET_CONTEXT SocketContext);
 NTSTATUS DisconnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context);
-NTSTATUS CloseSocket(PWSK_SOCKET Socket, PWSK_APP_SOCKET_CONTEXT SocketContext);
+NTSTATUS CloseSocket(PWSK_APP_SOCKET_CONTEXT SocketContext);
 NTSTATUS CloseSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context);
 
 NTSTATUS DelayForMilliseconds(LONG milliseconds);
