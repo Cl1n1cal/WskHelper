@@ -301,7 +301,12 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 		case IOCTL_WSKHELPER_DISCONNECT:
 		{
-
+			DbgPrint("IOCTL_WSKHELPER_DISCONNECT\n");
+			status = DisconnectSocket(g_socketContext);
+			
+			if (!NT_SUCCESS(status)) {
+				DbgPrint("DisconnectSocket failed: (0x%08X)\n", status);
+			}
 		}
 	}
 
