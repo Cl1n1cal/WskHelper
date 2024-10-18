@@ -24,7 +24,8 @@ NTSTATUS SendIoctlToDevice(
 	PVOID OutputBuffer,
 	ULONG OutputBufferLength);
 
-void ExampleFunction();
+void TestSendData();
+void TestDisconnect();
 
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
@@ -68,8 +69,11 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 	} while (false);
 
-	DbgPrint("Calling example function\n");
-	ExampleFunction();
+	//DbgPrint("TestSendData\n");
+	//TestSendData();
+
+	DbgPrint("TestDisconnect\n");
+	TestDisconnect();
 
 	return status;
 }
@@ -185,7 +189,7 @@ NTSTATUS SendIoctlToDevice(
 }
 
 
-void ExampleFunction() 
+void TestSendData() 
 {
 	UNICODE_STRING targetDeviceName;
 	PDEVICE_OBJECT targetDeviceObject;
@@ -232,4 +236,8 @@ void ExampleFunction()
 
 	// Dereference the file object when done
 	ObDereferenceObject(fileObject);
+}
+
+void TestDisconnect() {
+	
 }
