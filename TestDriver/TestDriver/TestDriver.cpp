@@ -26,6 +26,7 @@ NTSTATUS SendIoctlToDevice(
 
 void TestSendData();
 void TestDisconnect();
+void TestClosesocket();
 
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 {
@@ -72,8 +73,11 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 	//DbgPrint("TestSendData\n");
 	//TestSendData();
 
-	DbgPrint("TestDisconnect\n");
-	TestDisconnect();
+	//DbgPrint("TestDisconnect\n");
+	//TestDisconnect();
+
+	DbgPrint("TestCloseSocket\n");
+	TestCloseSocket();
 
 	return status;
 }
@@ -281,4 +285,9 @@ void TestDisconnect()
 
 	// Dereference the file object when done
 	ObDereferenceObject(fileObject);
+}
+
+void TestClosesocket()
+{
+
 }

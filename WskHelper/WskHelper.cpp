@@ -310,6 +310,18 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 			break;
 		}
+
+		case IOCTL_WSKHELPER_CLOSE:
+		{
+			DbgPrint("IOCTL_WSKHELPER_CLOSE\n");
+			status = CloseSocket(g_socketContext);
+
+			if (!NT_SUCCESS(status)) {
+				DbgPrint("CloseSocket failed: (0x%08X)\n", status);
+			}
+
+			break;
+		}
 	}
 
 	DbgPrint("WskHelper dispatch finished with status: (0x%08X)\n", status);
@@ -935,17 +947,19 @@ DisconnectComplete(
 // Function to close a socket
 NTSTATUS
 CloseSocket(
-	PWSK_SOCKET Socket,
 	PWSK_APP_SOCKET_CONTEXT SocketContext
 )
 {
 	PWSK_PROVIDER_BASIC_DISPATCH Dispatch;
 	PIRP Irp;
-	NTSTATUS Status;
+	NTSTATUS status;
+
+	// Initialize the event for synchronization
+	KeResetEvent(&SocketContext->OperationCompleteEvent);
 
 	// Get pointer to the socket's provider dispatch structure
 	Dispatch =
-		(PWSK_PROVIDER_BASIC_DISPATCH)(Socket->Dispatch);
+		(PWSK_PROVIDER_BASIC_DISPATCH)(SocketContext->Socket->Dispatch);
 
 	// Allocate an IRP
 	Irp =
@@ -972,14 +986,26 @@ CloseSocket(
 	);
 
 	// Initiate the close operation on the socket
-	Status =
+	status =
 		Dispatch->WskCloseSocket(
-			Socket,
+			SocketContext->Socket,
 			Irp
 		);
 
-	// Return the status of the call to WskCloseSocket()
-	return Status;
+	// If the WskSocket call can bind socket immediately it will return STATUS_SUCCESS
+	// If the socket cannot be bound right away it will return STATUS_PENDING and the socket
+	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable
+			NULL);      // No timeout
+	}
+
+	return status;
 }
 
 // Socket close IoCompletion routine
@@ -992,17 +1018,21 @@ CloseSocketComplete(
 {
 	UNREFERENCED_PARAMETER(DeviceObject);
 
-	PWSK_APP_SOCKET_CONTEXT SocketContext;
+	PWSK_APP_SOCKET_CONTEXT socketContext;
 
 	// Check the result of the socket close operation
 	if (Irp->IoStatus.Status == STATUS_SUCCESS)
 	{
 		// Get the pointer to the socket context
-		SocketContext =
+		socketContext =
 			(PWSK_APP_SOCKET_CONTEXT)Context;
 
 		// Perform any cleanup and/or deallocation of the socket context
 		//...
+
+
+		// Notify the waiter that the socket was bound
+		KeSetEvent(&socketContext->OperationCompleteEvent, IO_NO_INCREMENT, FALSE);
 	}
 
 	// Error status
