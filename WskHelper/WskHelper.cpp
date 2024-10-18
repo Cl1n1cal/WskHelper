@@ -288,8 +288,6 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			dataBuffer.Offset = 0; //MmGetMdlByteOffset(mdl);                    
 			dataBuffer.Length = dataLength;           // Set the length of the buffer
 
-			DelayForMilliseconds(3000);
-
 			DbgPrint("SendData\n");
 			status = SendData(g_socketContext, &dataBuffer);
 
@@ -298,6 +296,11 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 				DbgPrint("SendData failed: (0x%08X)\n", status);
 			}
 
+
+		}
+
+		case IOCTL_WSKHELPER_CLOSE:
+		{
 
 		}
 	}
@@ -804,6 +807,114 @@ SendComplete(
 	{
 		// Handle error
 
+	}
+
+	// Free the IRP
+	IoFreeIrp(Irp);
+
+	// Always return STATUS_MORE_PROCESSING_REQUIRED to
+	// terminate the completion processing of the IRP.
+	return STATUS_MORE_PROCESSING_REQUIRED;
+}
+
+// Function to disconnect a socket from a remote transport address
+NTSTATUS
+DisconnectSocket(
+	PWSK_APP_SOCKET_CONTEXT SocketContext
+)
+{
+	PWSK_PROVIDER_CONNECTION_DISPATCH Dispatch;
+	PIRP Irp;
+	NTSTATUS status;
+
+	// Initialize the event for synchronization
+	KeResetEvent(&SocketContext->OperationCompleteEvent);
+
+	// Get pointer to the socket's provider dispatch structure
+	Dispatch =
+		(PWSK_PROVIDER_CONNECTION_DISPATCH)(SocketContext->Socket->Dispatch);
+
+	// Allocate an IRP
+	Irp =
+		IoAllocateIrp(
+			1,
+			FALSE
+		);
+
+	// Check result
+	if (!Irp)
+	{
+		// Return error
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	// Set the completion routine for the IRP
+	IoSetCompletionRoutine(
+		Irp,
+		DisconnectComplete,
+		SocketContext,  // Use the socket object for the context
+		TRUE,
+		TRUE,
+		TRUE
+	);
+
+	// Initiate the disconnect operation on the socket
+	status =
+		Dispatch->WskDisconnect(
+			SocketContext->Socket,
+			NULL,  // No final data to be transmitted
+			0,     // No flags (graceful disconnect)
+			Irp
+		);
+
+	// If the WskSocket call can bind socket immediately it will return STATUS_SUCCESS
+	// If the socket cannot be bound right away it will return STATUS_PENDING and the socket
+	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable
+			NULL);      // No timeout
+	}
+
+	return status;
+}
+
+// Disconnect IoCompletion routine
+NTSTATUS
+DisconnectComplete(
+	PDEVICE_OBJECT DeviceObject,
+	PIRP Irp,
+	PVOID Context
+)
+{
+	UNREFERENCED_PARAMETER(DeviceObject);
+
+	PWSK_APP_SOCKET_CONTEXT socketContext;
+
+	// Check the result of the disconnect operation
+	if (Irp->IoStatus.Status == STATUS_SUCCESS)
+	{
+		// Get the socket object from the context
+		socketContext = (PWSK_APP_SOCKET_CONTEXT)Context;
+
+		// Perform the next operation on the socket
+		//...
+
+
+		// Notify the waiter that the socket was bound
+		KeSetEvent(&socketContext->OperationCompleteEvent, IO_NO_INCREMENT, FALSE);
+
+	}
+
+	// Error status
+	else
+	{
+		// Handle error
+		//...
 	}
 
 	// Free the IRP
