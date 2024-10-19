@@ -256,9 +256,28 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		{
 			// 5. Send data over the socket connection oriented socket
 			// Allocate memory for the data
-			const char* data = "Hello, WSK!";
-			size_t dataLength = strlen(data) + 1;
-			PVOID bufferMemory = ExAllocatePool2(POOL_FLAG_NON_PAGED, dataLength, '1gaT');
+
+			 // Access the input/output buffer
+			PVOID IoData = Irp->AssociatedIrp.SystemBuffer;
+
+			// Get the lengths of the input and output buffers
+			ULONG inputBufferLength = irpSp->Parameters.DeviceIoControl.InputBufferLength;
+			//ULONG outputBufferLength = irpSp->Parameters.DeviceIoControl.OutputBufferLength;
+
+			// Ensure that we have input data to work with
+			if (IoData != NULL && inputBufferLength > 0) {
+				// Cast the buffer to a specific type if needed, here it's a char* for strings
+				DbgPrint("Received input data: %s\n", (char*)IoData);
+
+				// Optionally, modify the output buffer here if needed
+				// E.g., modify the buffer in place if acting as an output buffer too
+			}
+			else {
+				DbgPrint("No valid input data received.\n");
+				status = STATUS_INVALID_PARAMETER;
+			}
+
+			PVOID bufferMemory = ExAllocatePool2(POOL_FLAG_NON_PAGED, inputBufferLength, '1gaT');
 			if (!bufferMemory)
 			{
 				DbgPrint("Exallocatepool2 failed\n");
@@ -266,11 +285,11 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			}
 
 			// Copy the data into the allocated memory
-			RtlCopyMemory(bufferMemory, data, dataLength);
+			RtlCopyMemory(bufferMemory, IoData, inputBufferLength);
 
 			// Allocate an MDL for the buffer memory
 			DbgPrint("IoAllocatedMdl\n");
-			PMDL mdl = IoAllocateMdl(bufferMemory, (ULONG)dataLength, FALSE, FALSE, NULL);
+			PMDL mdl = IoAllocateMdl(bufferMemory, inputBufferLength, FALSE, FALSE, NULL);
 			if (!mdl) {
 				DbgPrint("IoAllocateMdl failed\n");
 				ExFreePool(bufferMemory);
@@ -286,7 +305,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			WSK_BUF dataBuffer;
 			dataBuffer.Mdl = mdl;                     // Set the MDL for the data
 			dataBuffer.Offset = 0; //MmGetMdlByteOffset(mdl);                    
-			dataBuffer.Length = dataLength;           // Set the length of the buffer
+			dataBuffer.Length = inputBufferLength;           // Set the length of the buffer
 
 			DbgPrint("SendData\n");
 			status = SendData(g_socketContext, &dataBuffer);

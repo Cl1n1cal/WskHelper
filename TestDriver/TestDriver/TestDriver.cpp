@@ -4,9 +4,6 @@
 #include "WskHelper.h"
 #include "WskHelperCommon.h"
 
-
-
-
 void TestDriverUnload(PDRIVER_OBJECT DriverObject);
 
 NTSTATUS TestDriverDispatchCreate(PDEVICE_OBJECT, PIRP Irp);
@@ -70,14 +67,14 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 	} while (false);
 
-	//DbgPrint("TestSendData\n");
-	//TestSendData();
+	DbgPrint("TestSendData\n");
+	TestSendData();
 
 	//DbgPrint("TestDisconnect\n");
 	//TestDisconnect();
 
-	DbgPrint("TestCloseSocket\n");
-	TestCloseSocket();
+	//DbgPrint("TestCloseSocket\n");
+	//TestCloseSocket();
 
 	return status;
 }
@@ -89,7 +86,6 @@ NTSTATUS CompleteIrp(PIRP Irp, NTSTATUS Status = STATUS_SUCCESS, ULONG_PTR Info 
 	IoCompleteRequest(Irp, IO_NO_INCREMENT);
 	return Status;
 }
-
 
 void TestDriverUnload(PDRIVER_OBJECT DriverObject)
 {
@@ -121,15 +117,12 @@ NTSTATUS TestDriverDispatchWrite(PDEVICE_OBJECT, PIRP Irp)
 	return CompleteIrp(Irp);
 }
 
-
-
 NTSTATUS TestDriverDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 {
 	auto status = STATUS_SUCCESS;
 	auto len = 0;
 	return CompleteIrp(Irp, status, len);
 }
-
 
 NTSTATUS GetTargetDeviceObject(PUNICODE_STRING DeviceName, PDEVICE_OBJECT* DeviceObject, PFILE_OBJECT* FileObject) {
 	NTSTATUS status;
@@ -142,7 +135,6 @@ NTSTATUS GetTargetDeviceObject(PUNICODE_STRING DeviceName, PDEVICE_OBJECT* Devic
 
 	return status;
 }
-
 
 NTSTATUS SendIoctlToDevice(
 	PDEVICE_OBJECT TargetDeviceObject,
@@ -192,7 +184,6 @@ NTSTATUS SendIoctlToDevice(
 	return status;
 }
 
-
 void TestSendData() 
 {
 	UNICODE_STRING targetDeviceName;
@@ -229,6 +220,8 @@ void TestSendData()
 	// Send Data IOCTL
 	ioctlCode = IOCTL_WSKHELPER_SEND_DATA;  // Define your IOCTL code
 	UCHAR inputOutputBuffer1[2048] = { 0 };       // Input and output buffer is the same
+	const char* someData = "SomeData";
+	memcpy(inputOutputBuffer1, someData, strlen(someData) + 1);
 	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer1, sizeof(inputOutputBuffer1), inputOutputBuffer1, sizeof(inputOutputBuffer1));
 
 	if (NT_SUCCESS(status)) {
