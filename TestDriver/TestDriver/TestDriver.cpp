@@ -6,6 +6,13 @@
 
 void TestDriverUnload(PDRIVER_OBJECT DriverObject);
 
+UNICODE_STRING g_targetDeviceName;
+PDEVICE_OBJECT g_targetDeviceObject;
+PFILE_OBJECT g_fileObject;
+
+AddressInfo g_addressInfo;
+
+
 NTSTATUS TestDriverDispatchCreate(PDEVICE_OBJECT, PIRP Irp);
 NTSTATUS TestDriverDispatchClose(PDEVICE_OBJECT, PIRP Irp);
 NTSTATUS TestDriverDispatchRead(PDEVICE_OBJECT, PIRP Irp);
@@ -20,6 +27,11 @@ NTSTATUS SendIoctlToDevice(
 	ULONG InputBufferLength,
 	PVOID OutputBuffer,
 	ULONG OutputBufferLength);
+NTSTATUS WSKHRegister();
+NTSTATUS WSKHUnRegister();
+NTSTATUS WSKHSend(char* Data);
+NTSTATUS WSKHConnect(char* IpAddress, int PortNumber);
+
 
 void TestSendData();
 void TestDisconnect();
@@ -67,6 +79,17 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 
 	} while (false);
 
+	//###############################
+
+	//Register WskHelper
+	status = WSKHRegister();
+
+	if (!NT_SUCCESS(status))
+	{
+		DbgPrint("Failed to register WskHelper (0x%08X)\n", status);
+	}
+
+
 	DbgPrint("TestSendData\n");
 	TestSendData();
 
@@ -76,6 +99,10 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING Reg
 	//DbgPrint("TestCloseSocket\n");
 	//TestCloseSocket();
 
+	//Unregister WskHelper
+	status = WSKHUnRegister();
+
+	//#############################
 	return status;
 }
 
@@ -124,6 +151,32 @@ NTSTATUS TestDriverDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 	return CompleteIrp(Irp, status, len);
 }
 
+NTSTATUS WSKHRegister()
+{
+	NTSTATUS status = STATUS_SUCCESS;
+
+	// The target device's name (e.g., for the second driver)
+	RtlInitUnicodeString(&g_targetDeviceName, L"\\Device\\WskHelper");
+
+	// Step 1: Get the target device object pointer
+	status = GetTargetDeviceObject(&g_targetDeviceName, &g_targetDeviceObject, &g_fileObject);
+	if (!NT_SUCCESS(status)) {
+		DbgPrint("Failed to get the target device object\n");
+		return status;
+	}
+
+	return status;
+}
+
+NTSTATUS WSKHUnRegister()
+{
+	// Dereference the file object when done
+	ObDereferenceObject(g_fileObject);
+
+	return STATUS_SUCCESS;
+}
+
+
 NTSTATUS GetTargetDeviceObject(PUNICODE_STRING DeviceName, PDEVICE_OBJECT* DeviceObject, PFILE_OBJECT* FileObject) {
 	NTSTATUS status;
 
@@ -137,13 +190,13 @@ NTSTATUS GetTargetDeviceObject(PUNICODE_STRING DeviceName, PDEVICE_OBJECT* Devic
 }
 
 NTSTATUS SendIoctlToDevice(
-	PDEVICE_OBJECT TargetDeviceObject,
-	PFILE_OBJECT FileObject,
-	ULONG IoctlCode,
-	PVOID InputBuffer,
-	ULONG InputBufferLength,
-	PVOID OutputBuffer,
-	ULONG OutputBufferLength)
+	PDEVICE_OBJECT	TargetDeviceObject,
+	PFILE_OBJECT	FileObject,
+	ULONG			IoctlCode,
+	PVOID			InputBuffer,
+	ULONG			InputBufferLength,
+	PVOID			OutputBuffer,
+	ULONG			OutputBufferLength)
 {
 	NTSTATUS status;
 	PIRP irp;
@@ -184,29 +237,18 @@ NTSTATUS SendIoctlToDevice(
 	return status;
 }
 
-void TestSendData() 
+NTSTATUS WSKHConnect(const char* IpAddress, const int PortNumber)
 {
-	UNICODE_STRING targetDeviceName;
-	PDEVICE_OBJECT targetDeviceObject;
-	PFILE_OBJECT fileObject;
-	NTSTATUS status;
+	NTSTATUS	status						=	STATUS_SUCCESS;
+	auto		ioctlCode				=	IOCTL_WSKHELPER_CREATE_CONNECTION;  // Define your IOCTL code
+	UCHAR		inputOutputBuffer[2048]		=	{ 0 };								// Input and output buffer is the same
 
-	// The target device's name (e.g., for the second driver)
-	RtlInitUnicodeString(&targetDeviceName, L"\\Device\\WskHelper");
+	// Set global address info struct
+	memcpy(g_addressInfo.IpAddress, IpAddress, strlen(IpAddress) + 1);
+	g_addressInfo.PortNumber = PortNumber;
 
-	// Step 1: Get the target device object pointer
-	status = GetTargetDeviceObject(&targetDeviceName, &targetDeviceObject, &fileObject);
-	if (!NT_SUCCESS(status)) {
-		DbgPrint("Failed to get the target device object\n");
-		return;
-	}
-
-	// TODO: Create KeWaiter so we can make sure that the g_socketContext is set correctly.
-
-	// Step 2: Send an IOCTL to the target driver
-	auto ioctlCode = IOCTL_WSKHELPER_CREATE_CONNECTION;  // Define your IOCTL code
-	UCHAR inputOutputBuffer[2048] = { 0 };       // Input and output buffer is the same
-	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer, sizeof(inputOutputBuffer), inputOutputBuffer, sizeof(inputOutputBuffer));
+	memcpy(inputOutputBuffer, (PVOID)&g_addressInfo, sizeof(g_addressInfo));
+	status = SendIoctlToDevice(g_targetDeviceObject, g_fileObject, ioctlCode, inputOutputBuffer, sizeof(inputOutputBuffer), inputOutputBuffer, sizeof(inputOutputBuffer));
 
 	if (NT_SUCCESS(status)) {
 		DbgPrint("Create Conn IOCTL sent successfully!\n");
@@ -215,14 +257,35 @@ void TestSendData()
 		DbgPrint("Failed to send IOCTL, status: 0x%x\n", status);
 	}
 
-	
+	return status;
+}
 
-	// Send Data IOCTL
-	ioctlCode = IOCTL_WSKHELPER_SEND_DATA;  // Define your IOCTL code
-	UCHAR inputOutputBuffer1[2048] = { 0 };       // Input and output buffer is the same
-	const char* someData = "SomeData";
-	memcpy(inputOutputBuffer1, someData, strlen(someData) + 1);
-	status = SendIoctlToDevice(targetDeviceObject, fileObject, ioctlCode, inputOutputBuffer1, sizeof(inputOutputBuffer1), inputOutputBuffer1, sizeof(inputOutputBuffer1));
+
+NTSTATUS WSKHSend(char* Data)
+{
+	NTSTATUS	status						=	STATUS_SUCCESS;
+	auto		ioctlCode				=	IOCTL_WSKHELPER_SEND_DATA;	// Define your IOCTL code
+	UCHAR		inputOutputBuffer[2048]	=	{ 0 };						// Input and output buffer is the same
+
+	memcpy(inputOutputBuffer, Data, strlen(Data) + 1);
+	status = SendIoctlToDevice(g_targetDeviceObject, g_fileObject, ioctlCode, inputOutputBuffer, sizeof(inputOutputBuffer), inputOutputBuffer, sizeof(inputOutputBuffer));
+
+	return status;
+}
+
+void TestSendData() 
+{
+	NTSTATUS	status		=	STATUS_SUCCESS;
+	char		someData[]	=	"SomeData\n";
+
+	status = WSKHConnect("127.0.0.1", 9999);
+
+	if (!NT_SUCCESS(status))
+	{
+		DbgPrint("WSKHConnect failed: 0x%x\n", status);
+	}
+
+	status = WSKHSend(someData);
 
 	if (NT_SUCCESS(status)) {
 		DbgPrint("Send Data IOCTL sent successfully!\n");
@@ -233,8 +296,7 @@ void TestSendData()
 		DbgPrint("---Send data Test Failed---\n");
 	}
 
-	// Dereference the file object when done
-	ObDereferenceObject(fileObject);
+	
 }
 
 void TestDisconnect()
