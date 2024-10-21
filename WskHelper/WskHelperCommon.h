@@ -32,3 +32,9 @@ struct Message
 {
 	char Msg[1024];
 };
+
+struct AddressInfo
+{
+	char	IpAddress[100];
+	int		PortNumber;
+};
