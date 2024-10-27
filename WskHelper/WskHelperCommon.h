@@ -33,8 +33,8 @@ struct Message
 	char Msg[1024];
 };
 
-struct AddressInfo
+typedef struct AddressInfo
 {
 	char	IpAddress[100];
-	int		PortNumber;
-};
+	USHORT		PortNumber;
+} AddressInfo, *PAddressInfo;

@@ -161,7 +161,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		{
 			DbgPrint("Create connection called\n");
 
-			if (dic.OutputBufferLength < sizeof(AddressInfo))
+			if (dic.InputBufferLength < sizeof(AddressInfo))
 			{
 				status = STATUS_BUFFER_TOO_SMALL;
 				DbgPrint("Buffer too small, cannot contain address info\n");
@@ -179,6 +179,16 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("WskCaptureProviderNpi failed (0x%08X)\n", status);
+			}
+
+
+			// Capture the AddressInfo from the input buffer
+			PAddressInfo addressInfo = (PAddressInfo)(Irp->AssociatedIrp.SystemBuffer);
+			if (addressInfo == nullptr)
+			{
+				status = STATUS_INVALID_PARAMETER;
+				DbgPrint("Failed to capture AddressInfo from input buffer\n");
+				break;
 			}
 
 			// WskSocketConnect can be used for the 3 steps below, but for educational purposes it will be done manually - for now
@@ -220,10 +230,12 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			}
 
 			// 4. Create a connection with the socket
+			USHORT port = addressInfo->PortNumber; // User supplied port number
+			ULONG ipAddr =  ipv4_to_network_long(addressInfo->IpAddress);
 			SOCKADDR_IN remoteAddr;
 			remoteAddr.sin_family = AF_INET;
-			remoteAddr.sin_port = Khtons((SHORT)9999);  // Port 9999
-			remoteAddr.sin_addr.s_addr = Khtonl(0x7f000001);  // IP address 127.0.0.1
+			remoteAddr.sin_port = Khtons(port); 
+			remoteAddr.sin_addr.s_addr = ipAddr;  
 			DbgPrint("ConnectSocket\n");
 
 			if (g_socketContext->Socket == NULL) {
@@ -232,7 +244,6 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			}
 
 			status = ConnectSocket(g_socketContext, (PSOCKADDR)&remoteAddr);
-			DelayForMilliseconds(3000);
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("ConnectSocket failed: (0x%08X)\n", status);

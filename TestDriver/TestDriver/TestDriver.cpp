@@ -30,7 +30,7 @@ NTSTATUS SendIoctlToDevice(
 NTSTATUS WSKHRegister();
 NTSTATUS WSKHUnRegister();
 NTSTATUS WSKHSend(char* Data);
-NTSTATUS WSKHConnect(char* IpAddress, int PortNumber);
+NTSTATUS WSKHConnect(const char* IpAddress, USHORT PortNumber);
 NTSTATUS WSKHDisconnect();
 NTSTATUS WSKHCloseSocket();
 
@@ -239,17 +239,31 @@ NTSTATUS SendIoctlToDevice(
 	return status;
 }
 
-NTSTATUS WSKHConnect(const char* IpAddress, const int PortNumber)
+NTSTATUS WSKHConnect(const char* IpAddress, const USHORT PortNumber)
 {
 	NTSTATUS	status						=	STATUS_SUCCESS;
 	auto		ioctlCode				=	IOCTL_WSKHELPER_CREATE_CONNECTION;  // Define your IOCTL code
 	UCHAR		inputOutputBuffer[2048]		=	{ 0 };								// Input and output buffer is the same
 
-	// Set global address info struct
-	memcpy(g_addressInfo.IpAddress, IpAddress, strlen(IpAddress) + 1);
+	// Ensure that the provided IpAddress is not NULL
+	if (IpAddress == NULL) {
+		DbgPrint("Error: IpAddress is NULL\n");
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	// Clear the global address info struct to avoid garbage data
+	RtlZeroMemory(&g_addressInfo, sizeof(g_addressInfo));
+
+	// Safely copy the IP address and ensure null termination
+	strncpy(g_addressInfo.IpAddress, IpAddress, sizeof(g_addressInfo.IpAddress) - 1);
+	g_addressInfo.IpAddress[sizeof(g_addressInfo.IpAddress) - 1] = '\0';  // Null-terminate explicitly
+
+	// Set the port number
 	g_addressInfo.PortNumber = PortNumber;
 
+	// Copy g_addressInfo to the input/output buffer for the IOCTL
 	memcpy(inputOutputBuffer, (PVOID)&g_addressInfo, sizeof(g_addressInfo));
+
 	status = SendIoctlToDevice(g_targetDeviceObject, g_fileObject, ioctlCode, inputOutputBuffer, sizeof(inputOutputBuffer), inputOutputBuffer, sizeof(inputOutputBuffer));
 
 	return status;
