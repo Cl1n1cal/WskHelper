@@ -160,17 +160,14 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 		case IOCTL_WSKHELPER_CREATE_CONNECTION:
 		{
 			DbgPrint("Create connection called\n");
-			DbgPrint("Size of message: %llu\n", sizeof(Message));
-			DbgPrint("Size og dic.OuputBufferLength: %d\n", dic.OutputBufferLength);
 
-			if (dic.OutputBufferLength < sizeof(Message))
+			if (dic.OutputBufferLength < sizeof(AddressInfo))
 			{
 				status = STATUS_BUFFER_TOO_SMALL;
-				DbgPrint("Buffer too small\n");
+				DbgPrint("Buffer too small, cannot contain address info\n");
 				break;
 			}
 
-			DbgPrint("Send stats called\n");
 			WSK_PROVIDER_NPI wskProviderNpi;
 
 
@@ -179,15 +176,10 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			DbgPrint("WskCaptureProviderNPI\n");
 			status = WskCaptureProviderNPI(&g_wskRegistration, WSK_NO_WAIT, &wskProviderNpi);
 
-			
-
 			if (!NT_SUCCESS(status))
 			{
 				DbgPrint("WskCaptureProviderNpi failed (0x%08X)\n", status);
 			}
-
-
-
 
 			// WskSocketConnect can be used for the 3 steps below, but for educational purposes it will be done manually - for now
 
@@ -196,16 +188,13 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			// Pointer to a driver - determined context to pass to the IoCompletion routine.
 			// Context information must be stored in nonpaged memory, because the IoCompletion routine is called at IRQL <= DISPATCH_LEVEL.
 			g_socketContext = (PWSK_APP_SOCKET_CONTEXT)ExAllocatePool2(
-				POOL_FLAG_NON_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'ASOC');
+				POOL_FLAG_NON_PAGED, sizeof(WSK_APP_SOCKET_CONTEXT), 'GSOC');
 			if (!g_socketContext)
 			{
 				DbgPrint("Allocating Socket context failed");
 				status = STATUS_INSUFFICIENT_RESOURCES;
 				break;
 			}
-
-			// Initialize the event for synchronization
-			KeInitializeEvent(&g_socketContext->OperationCompleteEvent, NotificationEvent, FALSE);
 
 			DbgPrint("CreateConnectionSocket\n");
 			status = CreateConnectionSocket(&wskProviderNpi, g_socketContext, nullptr); // Not using event callbacks for now, hence the nullptr on Dispatch
@@ -250,6 +239,31 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			}
 
 			break;
+		}
+
+		case IOCTL_WSKHELPER_CREATE_LISTENER:
+		{
+			DbgPrint("Create listener called\n");
+
+			if (dic.OutputBufferLength < sizeof(AddressInfo))
+			{
+				status = STATUS_BUFFER_TOO_SMALL;
+				DbgPrint("Buffer too small, cannot contain address info\n");
+				break;
+			}
+
+			WSK_PROVIDER_NPI wskProviderNpi;
+
+			// 1. Register WSK Provider Npi - Gives access to Wsk Functions
+			// WSK_NO_WAIT - Return from the function immediately if the NPI is not available
+			DbgPrint("WskCaptureProviderNPI\n");
+			status = WskCaptureProviderNPI(&g_wskRegistration, WSK_NO_WAIT, &wskProviderNpi);
+
+			if (!NT_SUCCESS(status))
+			{
+				DbgPrint("WskCaptureProviderNpi failed (0x%08X)\n", status);
+			}
+			
 		}
 
 		case IOCTL_WSKHELPER_SEND_DATA:
@@ -339,6 +353,11 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 				DbgPrint("CloseSocket failed: (0x%08X)\n", status);
 			}
 
+				if (g_socketContext != NULL)
+				{
+					ExFreePool2(g_socketContext, 'GSOC', NULL, NULL);
+				}
+
 			break;
 		}
 	}
@@ -402,11 +421,130 @@ NTSTATUS TerminateWsk()
 
 	return status;
 }
+
+// Function to create a new listening socket
+NTSTATUS CreateListeningSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_CLIENT_CONNECTION_DISPATCH Dispatch)
+{
+	PIRP Irp;
+	NTSTATUS status;
+
+
+	// Initialize the event for synchronization
+	KeInitializeEvent(&g_socketContext->OperationCompleteEvent, NotificationEvent, FALSE);
+
+	// Allocate an IRP
+	Irp =
+		IoAllocateIrp(
+			1,
+			FALSE
+		);
+
+	// Check result
+	if (!Irp)
+	{
+		// Return error
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	// Set the completion routine for the IRP
+	IoSetCompletionRoutine(
+		Irp,
+		CreateListeningSocketComplete,
+		SocketContext,
+		TRUE,
+		TRUE,
+		TRUE
+	);
+
+	// Initiate the creation of the socket
+	status =
+		WskProviderNpi->Dispatch->
+		WskSocket(
+			WskProviderNpi->Client,
+			AF_INET,
+			SOCK_STREAM,
+			IPPROTO_TCP,
+			WSK_FLAG_LISTEN_SOCKET,
+			SocketContext,
+			Dispatch,
+			NULL,
+			NULL,
+			NULL,
+			Irp
+		);
+
+	
+	// If the WskSocket call can create a socket immediately it will return STATUS_SUCCESS
+	// If the socket cannot be created right away it will return STATUS_PENDING and the socket
+	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable 
+			NULL);      // No timeout
+	}
+	return status;
+}
+
+// Socket creation IoCompletion routine
+NTSTATUS
+CreateListeningSocketComplete(
+	PDEVICE_OBJECT DeviceObject,
+	PIRP Irp,
+	PVOID Context
+)
+{
+	UNREFERENCED_PARAMETER(DeviceObject);
+
+	PWSK_APP_SOCKET_CONTEXT SocketContext;
+
+	// Check the result of the socket creation
+	if (Irp->IoStatus.Status == STATUS_SUCCESS)
+	{
+		// Get the pointer to the socket context
+		SocketContext =
+			(PWSK_APP_SOCKET_CONTEXT)Context;
+
+		// Save the socket object for the new socket
+		SocketContext->Socket =
+			(PWSK_SOCKET)(Irp->IoStatus.Information);
+
+		// Set any socket options for the new socket
+		//...
+
+			// Enable any event callback functions on the new socket
+			//...
+
+			// Perform any other initializations
+			//...
+	}
+
+	// Error status
+	else
+	{
+		// Handle error
+		//...
+	}
+
+	// Free the IRP
+	IoFreeIrp(Irp);
+
+	// Always return STATUS_MORE_PROCESSING_REQUIRED to
+	// terminate the completion processing of the IRP.
+	return STATUS_MORE_PROCESSING_REQUIRED;
+}
+
 NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_CLIENT_CONNECTION_DISPATCH Dispatch)
 {
 	NTSTATUS	status;
 	PIRP		irp;
 
+
+	// Initialize the event for synchronization
+	KeInitializeEvent(&g_socketContext->OperationCompleteEvent, NotificationEvent, FALSE);
 
 	// Allocate an IRP - Necessary for WSK operations
 	irp = IoAllocateIrp(
@@ -518,6 +656,72 @@ NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, P
 	return STATUS_MORE_PROCESSING_REQUIRED;
 }
 
+
+// Function to bind a listening socket to a local transport address
+NTSTATUS
+BindListeningSocket(
+	PWSK_APP_SOCKET_CONTEXT SocketContext,
+	PSOCKADDR LocalAddress
+)
+{
+	PWSK_PROVIDER_LISTEN_DISPATCH Dispatch;
+	PIRP Irp;
+	NTSTATUS status;
+
+	// Initialize the event for synchronization
+	KeResetEvent(&SocketContext->OperationCompleteEvent);
+
+	// Get pointer to the socket's provider dispatch structure
+	Dispatch =
+		(PWSK_PROVIDER_LISTEN_DISPATCH)(SocketContext->Socket->Dispatch);
+
+	// Allocate an IRP
+	Irp =
+		IoAllocateIrp(
+			1,
+			FALSE
+		);
+
+	// Check result
+	if (!Irp)
+	{
+		// Return error
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
+
+	// Set the completion routine for the IRP
+	IoSetCompletionRoutine(
+		Irp,
+		BindComplete,
+		SocketContext->Socket,  // Use the socket object for the context
+		TRUE,
+		TRUE,
+		TRUE
+	);
+
+	// Initiate the bind operation on the socket
+	status =
+		Dispatch->WskBind(
+			SocketContext->Socket,
+			LocalAddress,
+			0,  // No flags
+			Irp
+		);
+
+	// If the WskSocket call can create a socket immediately it will return STATUS_SUCCESS
+	// If the socket cannot be created right away it will return STATUS_PENDING and the socket
+	// Will be contained in the Irp. See the Completion routine where the socket is fetched from the irp.
+	if (status == STATUS_PENDING) {
+		// Wait for the event to be signaled by the completion routine
+		status = KeWaitForSingleObject(
+			&SocketContext->OperationCompleteEvent,  // The event
+			Executive,  // Wait at executive level
+			KernelMode, // Kernel-mode wait
+			FALSE,      // Non-alertable 
+			NULL);      // No timeout
+	}
+	return status;
+}
 
 // Function to bind a connection socket to a local transport address
 NTSTATUS BindConnectionSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR LocalAddress)

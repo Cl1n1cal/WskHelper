@@ -24,7 +24,10 @@ NTSTATUS TerminateWsk();
 NTSTATUS CreateConnectionSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_CLIENT_CONNECTION_DISPATCH Dispatch);
 NTSTATUS CreateConnectionSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the socvisuket creation IoCompletion routine
 NTSTATUS BindConnectionSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR LocalAddress);
+NTSTATUS BindListeningSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR LocalAddress);
 NTSTATUS BindComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the bind IoCompletion routine
+NTSTATUS CreateListeningSocket(PWSK_PROVIDER_NPI WskProviderNpi, PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_CLIENT_CONNECTION_DISPATCH Dispatch);
+NTSTATUS CreateListeningSocketComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context);
 NTSTATUS ConnectSocket(PWSK_APP_SOCKET_CONTEXT SocketContext, PSOCKADDR RemoteAddress); // Function to connect a socket to a remote transport address
 NTSTATUS ConnectComplete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context); // Prototype for the connect IoCompletion routine
 NTSTATUS SendData(PWSK_APP_SOCKET_CONTEXT SocketContext, PWSK_BUF DataBuffer); // Function to send data
