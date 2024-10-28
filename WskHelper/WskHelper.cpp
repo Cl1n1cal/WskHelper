@@ -274,7 +274,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 			{
 				DbgPrint("WskCaptureProviderNpi failed (0x%08X)\n", status);
 			}
-			
+			break;
 		}
 
 		case IOCTL_WSKHELPER_SEND_DATA:
@@ -366,7 +366,7 @@ NTSTATUS WskHelperDispatchDeviceControl(PDEVICE_OBJECT, PIRP Irp)
 
 				if (g_socketContext != NULL)
 				{
-					ExFreePool2(g_socketContext, 'GSOC', NULL, NULL);
+					ExFreePool(g_socketContext);
 				}
 
 			break;
